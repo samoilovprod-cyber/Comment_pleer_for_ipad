@@ -1,7 +1,8 @@
 import CoreTransferable
 import UniformTypeIdentifiers
 
-/// Видео из «Фото», скопированное во временную папку приложения.
+/// Видео из «Фото» или перетащенное в приложение — копия в Application Support,
+/// чтобы его можно было открыть и после перезапуска.
 struct PickedMovie: Transferable {
     let url: URL
 
@@ -10,8 +11,8 @@ struct PickedMovie: Transferable {
             SentTransferredFile(movie.url)
         } importing: { received in
             // Файл от системы доступен только внутри этого замыкания — копируем к себе.
-            let folder = FileManager.default.temporaryDirectory
-                .appendingPathComponent("PhotosImport", isDirectory: true)
+            let folder = URL.applicationSupportDirectory
+                .appendingPathComponent("ImportedVideos", isDirectory: true)
                 .appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let copy = folder.appendingPathComponent(received.file.lastPathComponent)

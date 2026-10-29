@@ -4,11 +4,16 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct PlayerScreen: View {
+    /// Сколько точек горизонтального свайпа по видео — один кадр.
+    private static let jogPointsPerFrame: CGFloat = 8
+
     @StateObject private var model = PlayerModel()
     @State private var isImporting = false
     @State private var isPickingFromPhotos = false
     @State private var photosSelection: PhotosPickerItem?
-    @State private var isLoadingFromPhotos = false
+    @State private var isCopyingVideo = false
+    @State private var isDropTargeted = false
+    @State private var jogStartFrame: Int?
     @State private var timecodeInput = ""
     @State private var timecodeInputError: String?
 
@@ -26,16 +31,27 @@ struct PlayerScreen: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu("Открыть видео", systemImage: "film") { openSourceButtons }
-                        .disabled(isLoadingFromPhotos)
+                        .disabled(isCopyingVideo)
                 }
             }
             .overlay {
-                if isLoadingFromPhotos {
-                    ProgressView("Загрузка из «Фото»…")
+                if isCopyingVideo {
+                    ProgressView("Копирование видео…")
                         .padding(24)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                } else if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(.tint, style: StrokeStyle(lineWidth: 4, dash: [12]))
+                        .padding(8)
+                        .allowsHitTesting(false)
                 }
             }
+            // Перетаскивание из «Файлов», «Фото» и других приложений в Split View / Stage Manager.
+            .dropDestination(for: PickedMovie.self) { movies, _ in
+                guard let movie = movies.first else { return false }
+                Task { await model.open(url: movie.url, isImportedCopy: true) }
+                return true
+            } isTargeted: { isDropTargeted = $0 }
         }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.movie, .quickTimeMovie, .mpeg4Movie]) { result in
             if case let .success(url) = result {
@@ -50,6 +66,7 @@ struct PlayerScreen: View {
             photosSelection = nil
             Task { await openFromPhotos(item) }
         }
+        .task { await model.restoreLastVideo() }
         .alert("Не удалось открыть видео", isPresented: .constant(model.errorMessage != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
@@ -61,13 +78,13 @@ struct PlayerScreen: View {
         ContentUnavailableView {
             Label("Нет видео", systemImage: "film.stack")
         } description: {
-            Text("Откройте MOV или MP4 (ProRes, H.264, HEVC).")
+            Text("Откройте MOV или MP4 (ProRes, H.264, HEVC) или перетащите файл сюда.")
         } actions: {
             HStack {
                 openSourceButtons
             }
             .buttonStyle(.borderedProminent)
-            .disabled(isLoadingFromPhotos)
+            .disabled(isCopyingVideo)
         }
     }
 
@@ -78,8 +95,8 @@ struct PlayerScreen: View {
     }
 
     private func openFromPhotos(_ item: PhotosPickerItem) async {
-        isLoadingFromPhotos = true
-        defer { isLoadingFromPhotos = false }
+        isCopyingVideo = true
+        defer { isCopyingVideo = false }
         do {
             guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
                 model.errorMessage = "Выбранный объект не является видео."
@@ -97,20 +114,38 @@ struct PlayerScreen: View {
                 .aspectRatio(info.naturalSize.width > 0 ? info.naturalSize.width / info.naturalSize.height : 16 / 9,
                              contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(jogGesture)
 
             Text(model.currentTimecode?.description ?? "--:--:--:--")
                 .font(.system(size: 44, weight: .semibold, design: .monospaced))
                 .monospacedDigit()
+
+            ScrubberView(frame: model.currentFrame, frameCount: info.frameCount) { model.scrub(toFrame: $0) }
 
             transportControls
             timecodeEntry
             infoBar(info)
         }
         .padding()
+        .background { keyboardShortcuts }
+    }
+
+    /// Jog: горизонтальный свайп по видео — покадровый скраб от кадра, где начался жест.
+    private var jogGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                let start = jogStartFrame ?? model.currentFrame
+                jogStartFrame = start
+                model.scrub(toFrame: start + Int(value.translation.width / Self.jogPointsPerFrame))
+            }
+            .onEnded { _ in jogStartFrame = nil }
     }
 
     private var transportControls: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 20) {
+            Button("−1 секунда", systemImage: "gobackward") { model.step(seconds: -1) }
+                .keyboardShortcut(.leftArrow, modifiers: .option)
             Button("−10 кадров", systemImage: "backward.end.alt") { model.step(by: -10) }
                 .keyboardShortcut(.leftArrow, modifiers: .shift)
             Button("−1 кадр", systemImage: "backward.frame") { model.step(by: -1) }
@@ -119,14 +154,55 @@ struct PlayerScreen: View {
                    systemImage: model.isPlaying ? "pause.fill" : "play.fill") { model.togglePlayPause() }
                 .keyboardShortcut(.space, modifiers: [])
                 .font(.title)
+                .buttonRepeatBehavior(.disabled)
             Button("+1 кадр", systemImage: "forward.frame") { model.step(by: 1) }
                 .keyboardShortcut(.rightArrow, modifiers: [])
             Button("+10 кадров", systemImage: "forward.end.alt") { model.step(by: 10) }
                 .keyboardShortcut(.rightArrow, modifiers: .shift)
+            Button("+1 секунда", systemImage: "goforward") { model.step(seconds: 1) }
+                .keyboardShortcut(.rightArrow, modifiers: .option)
+
+            speedMenu
         }
         .labelStyle(.iconOnly)
         .font(.title2)
         .buttonStyle(.bordered)
+        // Удержание кнопки шага — кадры «прокручиваются», пока палец на кнопке.
+        .buttonRepeatBehavior(.enabled)
+    }
+
+    private var speedMenu: some View {
+        Menu {
+            Picker("Скорость", selection: Binding(get: { model.speed }, set: { model.setSpeed($0) })) {
+                ForEach(PlayerModel.speeds, id: \.self) { speed in
+                    Text(Self.speedLabel(speed)).tag(speed)
+                }
+            }
+        } label: {
+            Text(Self.speedLabel(model.speed))
+                .font(.body.monospacedDigit())
+                .frame(minWidth: 44)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+    }
+
+    private static func speedLabel(_ speed: Float) -> String {
+        speed.formatted(.number.precision(.fractionLength(0...2))) + "×"
+    }
+
+    /// J/K/L как в монтажных программах. Кнопки невидимые — нужны только ради сочетаний клавиш.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            Button("Назад (J)") { model.shuttle(forward: false) }
+                .keyboardShortcut("j", modifiers: [])
+            Button("Стоп (K)") { model.stop() }
+                .keyboardShortcut("k", modifiers: [])
+            Button("Вперёд (L)") { model.shuttle(forward: true) }
+                .keyboardShortcut("l", modifiers: [])
+        }
+        .opacity(0)
+        .accessibilityHidden(true)
     }
 
     private var timecodeEntry: some View {
