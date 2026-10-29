@@ -112,8 +112,14 @@ enum VideoTimecodeReader {
         guard reader.startReading() else { return nil }
         defer { reader.cancelReading() }
 
-        guard let sample = output.copyNextSampleBuffer(),
-              let block = CMSampleBufferGetDataBuffer(sample) else { return nil }
+        // Первыми могут прийти служебные буферы без сэмплов (например, на границе edit list) — пропускаем их.
+        var dataBlock: CMBlockBuffer?
+        while dataBlock == nil, let sample = output.copyNextSampleBuffer() {
+            if CMSampleBufferGetNumSamples(sample) > 0 {
+                dataBlock = CMSampleBufferGetDataBuffer(sample)
+            }
+        }
+        guard let block = dataBlock else { return nil }
 
         let frameNumber: Int
         switch CMFormatDescriptionGetMediaSubType(description) {

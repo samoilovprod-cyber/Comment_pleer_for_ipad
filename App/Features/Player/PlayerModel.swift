@@ -14,15 +14,19 @@ final class PlayerModel: ObservableObject {
     private var timeObserver: Any?
     private var rateObserver: NSKeyValueObservation?
     private var accessedURL: URL?
+    /// Наша копия видео из «Фото» — удаляем её при закрытии.
+    private var importedCopyURL: URL?
     private var pendingSeeks = 0
 
     var currentTimecode: Timecode? {
         info.map { $0.startTimecode + currentFrame }
     }
 
-    func open(url: URL) async {
+    func open(url: URL, isImportedCopy: Bool = false) async {
         close()
-        if url.startAccessingSecurityScopedResource() {
+        if isImportedCopy {
+            importedCopyURL = url
+        } else if url.startAccessingSecurityScopedResource() {
             accessedURL = url
         }
         fileName = url.lastPathComponent
@@ -52,6 +56,10 @@ final class PlayerModel: ObservableObject {
         player.replaceCurrentItem(with: nil)
         accessedURL?.stopAccessingSecurityScopedResource()
         accessedURL = nil
+        if let importedCopyURL {
+            try? FileManager.default.removeItem(at: importedCopyURL.deletingLastPathComponent())
+        }
+        importedCopyURL = nil
         info = nil
         fileName = nil
         currentFrame = 0

@@ -1,10 +1,14 @@
 import FrameTimecode
+import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct PlayerScreen: View {
     @StateObject private var model = PlayerModel()
     @State private var isImporting = false
+    @State private var isPickingFromPhotos = false
+    @State private var photosSelection: PhotosPickerItem?
+    @State private var isLoadingFromPhotos = false
     @State private var timecodeInput = ""
     @State private var timecodeInputError: String?
 
@@ -21,7 +25,15 @@ struct PlayerScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Открыть видео", systemImage: "film") { isImporting = true }
+                    Menu("Открыть видео", systemImage: "film") { openSourceButtons }
+                        .disabled(isLoadingFromPhotos)
+                }
+            }
+            .overlay {
+                if isLoadingFromPhotos {
+                    ProgressView("Загрузка из «Фото»…")
+                        .padding(24)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                 }
             }
         }
@@ -29,6 +41,14 @@ struct PlayerScreen: View {
             if case let .success(url) = result {
                 Task { await model.open(url: url) }
             }
+        }
+        // .current — без перекодирования: сохраняем исходные кадры, частоту и трек тайм-кода.
+        .photosPicker(isPresented: $isPickingFromPhotos, selection: $photosSelection,
+                      matching: .videos, preferredItemEncoding: .current)
+        .onChange(of: photosSelection) { _, item in
+            guard let item else { return }
+            photosSelection = nil
+            Task { await openFromPhotos(item) }
         }
         .alert("Не удалось открыть видео", isPresented: .constant(model.errorMessage != nil)) {
             Button("OK") { model.errorMessage = nil }
@@ -43,8 +63,31 @@ struct PlayerScreen: View {
         } description: {
             Text("Откройте MOV или MP4 (ProRes, H.264, HEVC).")
         } actions: {
-            Button("Открыть видео") { isImporting = true }
-                .buttonStyle(.borderedProminent)
+            HStack {
+                openSourceButtons
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isLoadingFromPhotos)
+        }
+    }
+
+    @ViewBuilder
+    private var openSourceButtons: some View {
+        Button("Из «Файлов»", systemImage: "folder") { isImporting = true }
+        Button("Из «Фото»", systemImage: "photo.on.rectangle") { isPickingFromPhotos = true }
+    }
+
+    private func openFromPhotos(_ item: PhotosPickerItem) async {
+        isLoadingFromPhotos = true
+        defer { isLoadingFromPhotos = false }
+        do {
+            guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
+                model.errorMessage = "Выбранный объект не является видео."
+                return
+            }
+            await model.open(url: movie.url, isImportedCopy: true)
+        } catch {
+            model.errorMessage = error.localizedDescription
         }
     }
 
