@@ -75,7 +75,7 @@ struct PlayerScreen: View {
         }
         .sheet(isPresented: $isMediaInfoShown) {
             if let asset = model.asset {
-                MediaInfoSheet(asset: asset)
+                MediaInfoSheet(asset: asset, timecode: model.info)
             }
         }
         .onChange(of: isMediaInfoShown) { _, shown in

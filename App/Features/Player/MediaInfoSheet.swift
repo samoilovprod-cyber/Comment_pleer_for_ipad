@@ -4,6 +4,7 @@ import SwiftUI
 /// Окно «Информация о файле»: кодеки, битрейты, цвет, тайм-код, метаданные.
 struct MediaInfoSheet: View {
     let asset: AVURLAsset
+    let timecode: VideoTimecodeInfo?
 
     @Environment(\.dismiss) private var dismiss
     @State private var sections: [MediaInfoSection]?
@@ -42,6 +43,6 @@ struct MediaInfoSheet: View {
                 }
             }
         }
-        .task { sections = await MediaInfoReader.read(asset: asset) }
+        .task { sections = await MediaInfoReader.read(asset: asset, timecode: timecode) }
     }
 }

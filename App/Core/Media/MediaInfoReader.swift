@@ -1,4 +1,5 @@
 import AVFoundation
+import FrameTimecode
 
 /// Сведения о файле в духе MediaInfo: общие, по каждой дорожке и метаданные.
 struct MediaInfoSection: Identifiable {
@@ -14,7 +15,9 @@ struct MediaInfoSection: Identifiable {
 }
 
 enum MediaInfoReader {
-    static func read(asset: AVURLAsset) async -> [MediaInfoSection] {
+    /// `timecode` — то, что плеер уже знает о тайм-коде: длительности показываем как HH:MM:SS:FF в его частоте.
+    static func read(asset: AVURLAsset, timecode: VideoTimecodeInfo?) async -> [MediaInfoSection] {
+        let rate = timecode?.rate
         var sections: [MediaInfoSection] = []
         let duration = (try? await asset.load(.duration)) ?? .zero
         let fileSize = (try? asset.url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
@@ -23,9 +26,12 @@ enum MediaInfoReader {
         general.add("File", asset.url.lastPathComponent)
         general.add("Format", containerName(asset.url.pathExtension))
         general.add("File size", fileSize.map(formatFileSize))
-        general.add("Duration", formatDuration(duration))
+        general.add("Duration", formatDuration(duration, rate: rate))
         if let fileSize, duration.seconds > 0 {
             general.add("Overall bit rate", formatBitrate(Double(fileSize) * 8 / duration.seconds))
+        }
+        if let timecode {
+            general.add("Frame count", "\(timecode.frameCount)")
         }
         if let created = try? await asset.load(.creationDate), let date = try? await created.load(.dateValue) {
             general.add("Recorded date", date.formatted(Date.FormatStyle(date: .abbreviated, time: .standard).locale(Locale(identifier: "en_US"))))
@@ -39,13 +45,13 @@ enum MediaInfoReader {
             let number = counters[track.mediaType]!
             switch track.mediaType {
             case .video:
-                sections.append(MediaInfoSection(title: "Video \(number)", rows: await videoRows(track)))
+                sections.append(MediaInfoSection(title: "Video \(number)", rows: await videoRows(track, rate: rate)))
             case .audio:
-                sections.append(MediaInfoSection(title: "Audio \(number)", rows: await audioRows(track)))
+                sections.append(MediaInfoSection(title: "Audio \(number)", rows: await audioRows(track, rate: rate)))
             case .timecode:
-                sections.append(MediaInfoSection(title: "Timecode \(number)", rows: await timecodeRows(track)))
+                sections.append(MediaInfoSection(title: "Timecode \(number)", rows: await timecodeRows(track, timecode: timecode)))
             default:
-                let rows = await commonTrackRows(track)
+                let rows = await commonTrackRows(track, rate: rate)
                 sections.append(MediaInfoSection(title: "Track \(track.mediaType.rawValue) \(number)", rows: rows))
             }
         }
@@ -68,8 +74,8 @@ enum MediaInfoReader {
 
     // MARK: - Дорожки
 
-    private static func videoRows(_ track: AVAssetTrack) async -> [MediaInfoSection.Row] {
-        var rows = await commonTrackRows(track)
+    private static func videoRows(_ track: AVAssetTrack, rate: FrameRate?) async -> [MediaInfoSection.Row] {
+        var rows = await commonTrackRows(track, rate: rate)
         guard let (size, transform, fps, minFrameDuration) = try? await track.load(
             .naturalSize, .preferredTransform, .nominalFrameRate, .minFrameDuration) else { return rows }
         rows.add("Frame size", "\(Int(size.width)) × \(Int(size.height))")
@@ -109,8 +115,8 @@ enum MediaInfoReader {
         return rows
     }
 
-    private static func audioRows(_ track: AVAssetTrack) async -> [MediaInfoSection.Row] {
-        var rows = await commonTrackRows(track)
+    private static func audioRows(_ track: AVAssetTrack, rate: FrameRate?) async -> [MediaInfoSection.Row] {
+        var rows = await commonTrackRows(track, rate: rate)
         guard let description = try? await track.load(.formatDescriptions).first,
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee else { return rows }
         rows.add("Channels", "\(asbd.mChannelsPerFrame)")
@@ -121,8 +127,12 @@ enum MediaInfoReader {
         return rows
     }
 
-    private static func timecodeRows(_ track: AVAssetTrack) async -> [MediaInfoSection.Row] {
+    private static func timecodeRows(_ track: AVAssetTrack, timecode: VideoTimecodeInfo?) async -> [MediaInfoSection.Row] {
         var rows: [MediaInfoSection.Row] = []
+        if let timecode, timecode.source == .embedded {
+            rows.add("Start timecode", timecode.startTimecode.description)
+            rows.add("End timecode", timecode.endTimecode.description)
+        }
         guard let description = try? await track.load(.formatDescriptions).first else { return rows }
         let frameDuration = CMTimeCodeFormatDescriptionGetFrameDuration(description)
         if frameDuration.seconds > 0 {
@@ -140,7 +150,7 @@ enum MediaInfoReader {
     }
 
     /// Кодек, битрейт, язык — общее для всех дорожек.
-    private static func commonTrackRows(_ track: AVAssetTrack) async -> [MediaInfoSection.Row] {
+    private static func commonTrackRows(_ track: AVAssetTrack, rate: FrameRate?) async -> [MediaInfoSection.Row] {
         var rows: [MediaInfoSection.Row] = []
         if let description = try? await track.load(.formatDescriptions).first {
             let subtype = CMFormatDescriptionGetMediaSubType(description)
@@ -149,11 +159,11 @@ enum MediaInfoReader {
             rows.add("Codec", codecName(subtype) ?? formatName ?? fourCC(subtype))
             rows.add("FourCC", fourCC(subtype))
         }
-        if let (rate, range, language) = try? await track.load(.estimatedDataRate, .timeRange, .languageCode) {
-            if rate > 0 {
-                rows.add("Bit rate", formatBitrate(Double(rate)))
+        if let (dataRate, range, language) = try? await track.load(.estimatedDataRate, .timeRange, .languageCode) {
+            if dataRate > 0 {
+                rows.add("Bit rate", formatBitrate(Double(dataRate)))
             }
-            rows.add("Duration", formatDuration(range.duration))
+            rows.add("Duration", formatDuration(range.duration, rate: rate))
             if let language, language != "und" {
                 rows.add("Language", Locale(identifier: "en_US").localizedString(forLanguageCode: language) ?? language)
             }
@@ -218,8 +228,14 @@ enum MediaInfoReader {
         return String(bytes: bytes, encoding: .ascii) ?? "\(code)"
     }
 
-    private static func formatDuration(_ time: CMTime) -> String {
+    /// HH:MM:SS:FF — как длительность в монтажке; без частоты кадров — HH:MM:SS.mmm.
+    private static func formatDuration(_ time: CMTime, rate: FrameRate?) -> String {
         guard time.isNumeric else { return "—" }
+        if let rate {
+            // +1 мс — чтобы длительность вроде 3.99999 с не теряла последний кадр из-за округления.
+            let frames = rate.frameIndex(at: time + CMTime(value: 1, timescale: 1000))
+            return Timecode(frameNumber: frames, rate: rate).description
+        }
         let total = time.seconds
         let hours = Int(total) / 3600, minutes = Int(total) / 60 % 60, seconds = total.truncatingRemainder(dividingBy: 60)
         return String(format: "%02d:%02d:%06.3f", hours, minutes, seconds)
