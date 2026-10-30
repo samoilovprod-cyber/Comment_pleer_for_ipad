@@ -89,13 +89,13 @@ struct PlayerScreen: View {
             }
         }
         .onChange(of: isMediaInfoShown) { _, shown in
-            if !shown { isPlayerFocused = true }
+            if !shown { focusPlayer() }
         }
         .sheet(isPresented: $isExportShown) {
             ExportSheet(model: model)
         }
         .onChange(of: isExportShown) { _, shown in
-            if !shown { isPlayerFocused = true }
+            if !shown { focusPlayer() }
         }
         .alert("Edit Comment", isPresented: Binding(get: { editingComment != nil },
                                                     set: { if !$0 { editingComment = nil } })) {
@@ -107,7 +107,7 @@ struct PlayerScreen: View {
             Button("Cancel", role: .cancel) { editingComment = nil }
         }
         .onChange(of: editingComment == nil) { _, closed in
-            if closed { isPlayerFocused = true }
+            if closed { focusPlayer() }
         }
         .sheet(item: $sharedImage) { file in
             ShareSheet(items: [file.url])
@@ -269,22 +269,29 @@ struct PlayerScreen: View {
     private func keyHandling<Content: View>(_ content: Content) -> some View {
         content
             .background {
-                Color.clear
+                // Непрозрачный фон: прозрачный SwiftUI фокус не отдаёт.
+                Theme.background
                     .focusable()
                     .focusEffectDisabled()
                     .focused($isPlayerFocused)
                     .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
             }
-            .onAppear { isPlayerFocused = true }
+            .onAppear { focusPlayer() }
             .onChange(of: isCommentFocused) { _, focused in
-                if !focused { isPlayerFocused = true }
+                if !focused { focusPlayer() }
             }
             .onChange(of: isGoToTimecodeShown) { _, shown in
-                if !shown { isPlayerFocused = true }
+                if !shown { focusPlayer() }
             }
             .onChange(of: annotator.isActive) { _, active in
-                if !active { isPlayerFocused = true }
+                if !active { focusPlayer() }
             }
+    }
+
+    /// Возвращает клавиши плееру. Отдельным шагом: в том же обновлении, где поле
+    /// теряет фокус, SwiftUI новый фокус не принимает.
+    private func focusPlayer() {
+        DispatchQueue.main.async { isPlayerFocused = true }
     }
 
     private func playerColumn(info: VideoTimecodeInfo) -> some View {
@@ -296,7 +303,7 @@ struct PlayerScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(jogGesture, isEnabled: !annotator.isActive)
-                .gesture(TapGesture().onEnded { isCommentFocused = false; isPlayerFocused = true },
+                .gesture(TapGesture().onEnded { isCommentFocused = false; focusPlayer() },
                          isEnabled: !annotator.isActive)
                 .padding(16)
 
@@ -363,6 +370,7 @@ struct PlayerScreen: View {
             HStack(spacing: 6) {
                 Text(model.currentTimecode?.description ?? "--:--:--:--")
                     .foregroundStyle(Theme.textPrimary)
+                    .accessibilityIdentifier("currentTimecode")
                 Text("/ \(info.endTimecode.description)")
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -380,11 +388,17 @@ struct PlayerScreen: View {
             TextField("Leave a comment…", text: $commentText, axis: .vertical)
                 .lineLimit(1...4)
                 .focused($isCommentFocused)
+                .accessibilityIdentifier("commentField")
                 .foregroundStyle(Theme.textPrimary)
                 .onSubmit(submitComment)
-                .onKeyPress(.escape) {
-                    isCommentFocused = false
-                    return .handled
+                .background {
+                    // Esc само поле не получает (его съедает системный ввод) — ловим шорткатом.
+                    if isCommentFocused && !annotator.isActive {
+                        Button("Leave comment field") { isCommentFocused = false }
+                            .keyboardShortcut(.escape, modifiers: [])
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -403,6 +417,7 @@ struct PlayerScreen: View {
             .buttonStyle(.plain)
             .disabled(annotator.isActive && annotator.comment != nil)
             .accessibilityLabel(annotator.isActive ? "Discard drawing" : "Draw on frame")
+            .accessibilityIdentifier("drawButton")
 
             departmentMenu
             TimecodeChip(text: model.currentTimecode?.description ?? "--:--:--:--", isProminent: true)
@@ -468,7 +483,7 @@ struct PlayerScreen: View {
 
     private func cancelDrawing() {
         annotator.end()
-        isPlayerFocused = true
+        focusPlayer()
     }
 
     private func editDrawing(_ comment: ReviewComment) {
@@ -483,7 +498,7 @@ struct PlayerScreen: View {
             model.setAnnotation(annotator.annotation, for: comment)
         }
         annotator.end()
-        isPlayerFocused = true
+        focusPlayer()
     }
 
     private func shareImage(_ comment: ReviewComment) {
