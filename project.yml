@@ -28,6 +28,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.samoilovprod.commentplayer
         TARGETED_DEVICE_FAMILY: "2"
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AHUWBSC593
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Comment Player
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
