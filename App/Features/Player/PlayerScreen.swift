@@ -263,15 +263,18 @@ struct PlayerScreen: View {
         }
     }
 
-    /// Всё, что ловит клавиши плеера, когда фокус не в текстовом поле.
+    /// Клавиши плеера ловит невидимый слой позади интерфейса, а не контейнер вокруг него:
+    /// так он не перехватывает касания холста (иначе с клавиатурой Pencil не рисует)
+    /// и не получает нажатия, пока печатают в поле комментария.
     private func keyHandling<Content: View>(_ content: Content) -> some View {
-        // В режиме рисования плеер не держит фокус: с подключённой клавиатурой фокусируемый
-        // контейнер перехватывает касания и Apple Pencil не рисует. ⌘Z/Esc там — шорткаты тулбара.
         content
-            .focusable(!annotator.isActive)
-            .focusEffectDisabled()
-            .focused($isPlayerFocused)
-            .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
+            .background {
+                Color.clear
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($isPlayerFocused)
+                    .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
+            }
             .onAppear { isPlayerFocused = true }
             .onChange(of: isCommentFocused) { _, focused in
                 if !focused { isPlayerFocused = true }
@@ -554,7 +557,8 @@ struct PlayerScreen: View {
     /// Клавиатура: пробел, ←/→ (⇧ — 10 кадров, ⌥ — секунда), J/K/L; K+J/L — шаг по кадру.
     /// Русская раскладка тоже работает: О/Л/Д на месте J/K/L.
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        if annotator.isActive { return .ignored }
+        // В режиме рисования ⌘Z/⇧⌘Z/Esc — шорткаты тулбара.
+        if annotator.isActive || isCommentFocused { return .ignored }
         let isPressed = press.phase != .up
         switch press.key {
         case .space:
