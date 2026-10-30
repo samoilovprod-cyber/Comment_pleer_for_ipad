@@ -71,7 +71,7 @@ enum XLSXReportWriter {
         }
 
         let screenshotColumnWidth = max(14, (imageWidth + imagePadding * 2) * 4 / 3 / 7 + 1)
-        let cols = [5, 14, 8, 10, 60, Double(screenshotColumnWidth)].enumerated().map { index, width in
+        let cols = [5, 14, 8, 16, 60, Double(screenshotColumnWidth)].enumerated().map { index, width in
             "<col min=\"\(index + 1)\" max=\"\(index + 1)\" width=\"\(width)\" customWidth=\"1\"/>"
         }
 

@@ -11,10 +11,15 @@ struct ReviewReport {
         let isResolved: Bool
         let text: String
         let hasDrawing: Bool
+        /// Номер версии, из которой перенесено замечание.
+        var carriedFromVersion: Int?
         /// Кадр с пометками; nil — скриншот для этой строки не нужен.
         let image: UIImage?
 
-        var status: String { isResolved ? "Resolved" : "Open" }
+        var status: String {
+            let base = isResolved ? "Resolved" : "Open"
+            return carriedFromVersion.map { "\(base) · from v\($0)" } ?? base
+        }
     }
 
     var fileName: String

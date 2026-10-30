@@ -156,6 +156,15 @@ struct CommentsPanel: View {
                                 .foregroundStyle(Theme.accent)
                                 .accessibilityLabel("Has drawing")
                         }
+                        if let version = comment.carriedFromVersion {
+                            Text("from v\(version)")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Theme.field, in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(Theme.textSecondary)
+                                .help("Carried over from v\(version)")
+                        }
                     }
                     Text(comment.text.isEmpty ? "Drawing" : comment.text)
                         .italic(comment.text.isEmpty)
