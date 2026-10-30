@@ -254,8 +254,10 @@ struct PlayerScreen: View {
 
     /// Всё, что ловит клавиши плеера, когда фокус не в текстовом поле.
     private func keyHandling<Content: View>(_ content: Content) -> some View {
+        // В режиме рисования плеер не держит фокус: с подключённой клавиатурой фокусируемый
+        // контейнер перехватывает касания и Apple Pencil не рисует. ⌘Z/Esc там — шорткаты тулбара.
         content
-            .focusable()
+            .focusable(!annotator.isActive)
             .focusEffectDisabled()
             .focused($isPlayerFocused)
             .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
@@ -265,6 +267,9 @@ struct PlayerScreen: View {
             }
             .onChange(of: isGoToTimecodeShown) { _, shown in
                 if !shown { isPlayerFocused = true }
+            }
+            .onChange(of: annotator.isActive) { _, active in
+                if !active { isPlayerFocused = true }
             }
     }
 
@@ -277,7 +282,8 @@ struct PlayerScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(jogGesture, isEnabled: !annotator.isActive)
-                .onTapGesture { isCommentFocused = false; isPlayerFocused = true }
+                .gesture(TapGesture().onEnded { isCommentFocused = false; isPlayerFocused = true },
+                         isEnabled: !annotator.isActive)
                 .padding(16)
 
             controlBar(info: info)
@@ -537,9 +543,7 @@ struct PlayerScreen: View {
     /// Клавиатура: пробел, ←/→ (⇧ — 10 кадров, ⌥ — секунда), J/K/L; K+J/L — шаг по кадру.
     /// Русская раскладка тоже работает: О/Л/Д на месте J/K/L.
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        if annotator.isActive {
-            return handleDrawingKey(press)
-        }
+        if annotator.isActive { return .ignored }
         let isPressed = press.phase != .up
         switch press.key {
         case .space:
@@ -579,19 +583,6 @@ struct PlayerScreen: View {
     }
 
     /// В режиме рисования: ⌘Z / ⇧⌘Z — отмена/повтор, Esc — выйти; навигация по кадрам выключена.
-    private func handleDrawingKey(_ press: KeyPress) -> KeyPress.Result {
-        guard press.phase == .down else { return .handled }
-        if press.key == .escape {
-            cancelDrawing()
-            return .handled
-        }
-        if press.modifiers.contains(.command), press.characters.lowercased() == "z" || press.key == "z" {
-            if press.modifiers.contains(.shift) { annotator.redo() } else { annotator.undo() }
-            return .handled
-        }
-        return .handled
-    }
-
     private var timecodeEntry: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Go to Timecode").font(.headline)

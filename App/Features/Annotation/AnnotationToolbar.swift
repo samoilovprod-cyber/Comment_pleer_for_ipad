@@ -64,8 +64,10 @@ struct AnnotationToolbar: View {
             divider
 
             Button("Undo", systemImage: "arrow.uturn.backward") { editor.undo() }
+                .keyboardShortcut("z", modifiers: .command)
                 .disabled(!editor.canUndo)
             Button("Redo", systemImage: "arrow.uturn.forward") { editor.redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
                 .disabled(!editor.canRedo)
             Button("Clear", systemImage: "trash") { editor.clear() }
                 .disabled(editor.annotation.isEmpty)
@@ -73,6 +75,7 @@ struct AnnotationToolbar: View {
             Spacer(minLength: 4)
 
             Button("Cancel", action: onCancel)
+                .keyboardShortcut(.escape, modifiers: [])
             if let onSave {
                 Button("Save", action: onSave)
                     .buttonStyle(.borderedProminent)
