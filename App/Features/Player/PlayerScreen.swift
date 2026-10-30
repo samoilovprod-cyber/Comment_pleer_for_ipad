@@ -17,42 +17,43 @@ struct PlayerScreen: View {
     @State private var timecodeInput = ""
     @State private var timecodeInputError: String?
 
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var commentText = ""
+    @State private var isGoToTimecodeShown = false
+    @FocusState private var isCommentFocused: Bool
+    @FocusState private var isSearchFocused: Bool
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if let info = model.info {
-                    playerContent(info: info)
-                } else {
-                    emptyState
-                }
+        VStack(spacing: 0) {
+            header
+            Rectangle().fill(Theme.separator).frame(height: 1)
+            if let info = model.info {
+                reviewLayout(info: info)
+            } else {
+                emptyState
             }
-            .navigationTitle(model.fileName ?? "Comment Player")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu("Открыть видео", systemImage: "film") { openSourceButtons }
-                        .disabled(isCopyingVideo)
-                }
-            }
-            .overlay {
-                if isCopyingVideo {
-                    ProgressView("Копирование видео…")
-                        .padding(24)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                } else if isDropTargeted {
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(.tint, style: StrokeStyle(lineWidth: 4, dash: [12]))
-                        .padding(8)
-                        .allowsHitTesting(false)
-                }
-            }
-            // Перетаскивание из «Файлов», «Фото» и других приложений в Split View / Stage Manager.
-            .dropDestination(for: PickedMovie.self) { movies, _ in
-                guard let movie = movies.first else { return false }
-                Task { await model.open(url: movie.url, isImportedCopy: true) }
-                return true
-            } isTargeted: { isDropTargeted = $0 }
         }
+        .background(Theme.background.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
+        .overlay {
+            if isCopyingVideo {
+                ProgressView("Копирование видео…")
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            } else if isDropTargeted {
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(.tint, style: StrokeStyle(lineWidth: 4, dash: [12]))
+                    .padding(8)
+                    .allowsHitTesting(false)
+            }
+        }
+        // Перетаскивание из «Файлов», «Фото» и других приложений в Split View / Stage Manager.
+        .dropDestination(for: PickedMovie.self) { movies, _ in
+            guard let movie = movies.first else { return false }
+            Task { await model.open(url: movie.url, isImportedCopy: true) }
+            return true
+        } isTargeted: { isDropTargeted = $0 }
         .fileImporter(isPresented: $isImporting, allowedContentTypes: [.movie, .quickTimeMovie, .mpeg4Movie]) { result in
             if case let .success(url) = result {
                 Task { await model.open(url: url) }
@@ -74,6 +75,56 @@ struct PlayerScreen: View {
         }
     }
 
+    /// Шапка: кнопка открытия слева, имя файла и параметры видео по центру.
+    private var header: some View {
+        ZStack {
+            VStack(spacing: 2) {
+                Text(model.fileName ?? "Comment Player")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                if let info = model.info {
+                    headerSubtitle(info)
+                }
+            }
+            .padding(.horizontal, 140)
+
+            HStack {
+                Menu {
+                    openSourceButtons
+                } label: {
+                    Label("Открыть", systemImage: "film")
+                        .font(.subheadline.weight(.medium))
+                }
+                .disabled(isCopyingVideo)
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+        }
+        .frame(height: 52)
+        .background(Theme.panel)
+    }
+
+    private func headerSubtitle(_ info: VideoTimecodeInfo) -> some View {
+        HStack(spacing: 6) {
+            Text("\(info.rate.description) fps")
+            Text("·")
+            Text(info.source == .embedded ? "TC из файла" : "TC не найден — с 00:00:00:00")
+                .foregroundStyle(info.source == .embedded ? Theme.textSecondary : Color.orange)
+            Text("·")
+            Text("Кадр \(model.currentFrame + 1) / \(info.frameCount)")
+            if info.isLikelyVariableFrameRate {
+                Text("·")
+                Label("Переменная частота кадров", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .help("Тайм-код и шаг по кадрам могут быть неточными.")
+            }
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(Theme.textSecondary)
+        .lineLimit(1)
+    }
+
     private var emptyState: some View {
         ContentUnavailableView {
             Label("Нет видео", systemImage: "film.stack")
@@ -86,6 +137,7 @@ struct PlayerScreen: View {
             .buttonStyle(.borderedProminent)
             .disabled(isCopyingVideo)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -108,27 +160,121 @@ struct PlayerScreen: View {
         }
     }
 
-    private func playerContent(info: VideoTimecodeInfo) -> some View {
-        VStack(spacing: 16) {
+    /// Видео с панелью управления и полем комментария; справа — список комментариев
+    /// (в узком окне Split View — снизу).
+    @ViewBuilder
+    private func reviewLayout(info: VideoTimecodeInfo) -> some View {
+        let comments = CommentsPanel(comments: model.comments,
+                                     currentFrame: model.currentFrame,
+                                     timecode: model.timecode(forFrame:),
+                                     onSelect: { model.scrub(toFrame: $0.frame) },
+                                     onDelete: model.deleteComment,
+                                     isSearchFocused: $isSearchFocused)
+        if horizontalSizeClass == .compact {
+            VStack(spacing: 0) {
+                playerColumn(info: info)
+                comments.frame(height: 260)
+            }
+            .background { keyboardShortcuts }
+        } else {
+            HStack(spacing: 0) {
+                playerColumn(info: info)
+                Rectangle().fill(Theme.separator).frame(width: 1)
+                comments.frame(width: 320)
+            }
+            .background { keyboardShortcuts }
+        }
+    }
+
+    private func playerColumn(info: VideoTimecodeInfo) -> some View {
+        VStack(spacing: 0) {
             PlayerLayerView(player: model.player)
                 .aspectRatio(info.naturalSize.width > 0 ? info.naturalSize.width / info.naturalSize.height : 16 / 9,
                              contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(jogGesture)
+                .padding(16)
 
-            Text(model.currentTimecode?.description ?? "--:--:--:--")
-                .font(.system(size: 44, weight: .semibold, design: .monospaced))
-                .monospacedDigit()
-
-            ScrubberView(frame: model.currentFrame, frameCount: info.frameCount) { model.scrub(toFrame: $0) }
-
-            transportControls
-            timecodeEntry
-            infoBar(info)
+            controlBar(info: info)
+            Rectangle().fill(Theme.separator).frame(height: 1)
+            commentComposer
         }
-        .padding()
-        .background { keyboardShortcuts }
+    }
+
+    /// Панель под видео: таймлайн, транспорт, тайм-код, скорость.
+    private func controlBar(info: VideoTimecodeInfo) -> some View {
+        VStack(spacing: 4) {
+            ScrubberView(frame: model.currentFrame, frameCount: info.frameCount,
+                         markers: model.comments.map(\.frame)) { model.scrub(toFrame: $0) }
+
+            HStack(spacing: 12) {
+                transportControls
+                Spacer(minLength: 8)
+                timecodeButton(info: info)
+                Spacer(minLength: 8)
+                speedMenu
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 10)
+        .background(Theme.panel)
+    }
+
+    /// Текущий тайм-код; тап — переход к введённому тайм-коду.
+    private func timecodeButton(info: VideoTimecodeInfo) -> some View {
+        Button {
+            timecodeInput = ""
+            timecodeInputError = nil
+            isGoToTimecodeShown = true
+        } label: {
+            HStack(spacing: 6) {
+                Text(model.currentTimecode?.description ?? "--:--:--:--")
+                    .foregroundStyle(Theme.textPrimary)
+                Text("/ \(info.endTimecode.description)")
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .font(.system(.body, design: .monospaced).weight(.medium))
+            .lineLimit(1)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isGoToTimecodeShown) { timecodeEntry }
+    }
+
+    /// Поле комментария: тайм-код текущего кадра, видео ставится на паузу, как только начинаете писать.
+    private var commentComposer: some View {
+        HStack(spacing: 10) {
+            TextField("Оставьте комментарий…", text: $commentText, axis: .vertical)
+                .lineLimit(1...4)
+                .focused($isCommentFocused)
+                .foregroundStyle(Theme.textPrimary)
+                .onSubmit(submitComment)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: 8))
+                .onChange(of: isCommentFocused) { _, focused in
+                    if focused, model.isPlaying { model.stop() }
+                }
+
+            TimecodeChip(text: model.currentTimecode?.description ?? "--:--:--:--", isProminent: true)
+
+            Button("Отправить", action: submitComment)
+                .buttonStyle(.borderedProminent)
+                .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(12)
+        .background(Theme.panel)
+    }
+
+    /// Пока пользователь печатает, одиночные клавиши (пробел, J/K/L, стрелки) должны попадать в текст, а не в плеер.
+    private func shortcut(_ key: KeyEquivalent, _ modifiers: EventModifiers) -> KeyboardShortcut? {
+        isCommentFocused || isSearchFocused || isGoToTimecodeShown ? nil : KeyboardShortcut(key, modifiers: modifiers)
+    }
+
+    private func submitComment() {
+        model.addComment(commentText)
+        commentText = ""
     }
 
     /// Jog: горизонтальный свайп по видео — покадровый скраб от кадра, где начался жест.
@@ -143,30 +289,30 @@ struct PlayerScreen: View {
     }
 
     private var transportControls: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 14) {
             Button("−1 секунда", systemImage: "gobackward") { model.step(seconds: -1) }
-                .keyboardShortcut(.leftArrow, modifiers: .option)
+                .keyboardShortcut(shortcut(.leftArrow, .option))
             Button("−10 кадров", systemImage: "backward.end.alt") { model.step(by: -10) }
-                .keyboardShortcut(.leftArrow, modifiers: .shift)
+                .keyboardShortcut(shortcut(.leftArrow, .shift))
             Button("−1 кадр", systemImage: "backward.frame") { model.step(by: -1) }
-                .keyboardShortcut(.leftArrow, modifiers: [])
+                .keyboardShortcut(shortcut(.leftArrow, []))
             Button(model.isPlaying ? "Пауза" : "Играть",
                    systemImage: model.isPlaying ? "pause.fill" : "play.fill") { model.togglePlayPause() }
-                .keyboardShortcut(.space, modifiers: [])
+                .keyboardShortcut(shortcut(.space, []))
                 .font(.title)
+                .frame(width: 36)
                 .buttonRepeatBehavior(.disabled)
             Button("+1 кадр", systemImage: "forward.frame") { model.step(by: 1) }
-                .keyboardShortcut(.rightArrow, modifiers: [])
+                .keyboardShortcut(shortcut(.rightArrow, []))
             Button("+10 кадров", systemImage: "forward.end.alt") { model.step(by: 10) }
-                .keyboardShortcut(.rightArrow, modifiers: .shift)
+                .keyboardShortcut(shortcut(.rightArrow, .shift))
             Button("+1 секунда", systemImage: "goforward") { model.step(seconds: 1) }
-                .keyboardShortcut(.rightArrow, modifiers: .option)
-
-            speedMenu
+                .keyboardShortcut(shortcut(.rightArrow, .option))
         }
         .labelStyle(.iconOnly)
-        .font(.title2)
-        .buttonStyle(.bordered)
+        .font(.title3)
+        .foregroundStyle(Theme.textPrimary)
+        .buttonStyle(.borderless)
         // Удержание кнопки шага — кадры «прокручиваются», пока палец на кнопке.
         .buttonRepeatBehavior(.enabled)
     }
@@ -180,11 +326,14 @@ struct PlayerScreen: View {
             }
         } label: {
             Text(Self.speedLabel(model.speed))
-                .font(.body.monospacedDigit())
-                .frame(minWidth: 44)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: 4))
         }
         .menuStyle(.button)
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
     }
 
     private static func speedLabel(_ speed: Float) -> String {
@@ -195,50 +344,36 @@ struct PlayerScreen: View {
     private var keyboardShortcuts: some View {
         ZStack {
             Button("Назад (J)") { model.shuttle(forward: false) }
-                .keyboardShortcut("j", modifiers: [])
+                .keyboardShortcut(shortcut("j", []))
             Button("Стоп (K)") { model.stop() }
-                .keyboardShortcut("k", modifiers: [])
+                .keyboardShortcut(shortcut("k", []))
             Button("Вперёд (L)") { model.shuttle(forward: true) }
-                .keyboardShortcut("l", modifiers: [])
+                .keyboardShortcut(shortcut("l", []))
         }
         .opacity(0)
         .accessibilityHidden(true)
     }
 
     private var timecodeEntry: some View {
-        HStack {
-            TextField("Перейти к тайм-коду, например 01:00:10:05", text: $timecodeInput)
-                .textFieldStyle(.roundedBorder)
-                .keyboardType(.numbersAndPunctuation)
-                .font(.body.monospaced())
-                .frame(maxWidth: 360)
-                .onSubmit(goToTimecode)
-            Button("Перейти", action: goToTimecode)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Перейти к тайм-коду").font(.headline)
+            HStack {
+                TextField("01:00:10:05", text: $timecodeInput)
+                    .textFieldStyle(.roundedBorder)
+                    .keyboardType(.numbersAndPunctuation)
+                    .font(.body.monospaced())
+                    .frame(width: 200)
+                    .onSubmit(goToTimecode)
+                Button("Перейти", action: goToTimecode)
+                    .buttonStyle(.borderedProminent)
+            }
             if let timecodeInputError {
                 Text(timecodeInputError)
                     .foregroundStyle(.red)
                     .font(.footnote)
             }
         }
-    }
-
-    private func infoBar(_ info: VideoTimecodeInfo) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 20) {
-                Text("\(info.rate.description) fps")
-                Text("Начало \(info.startTimecode.description)")
-                Text("Конец \(info.endTimecode.description)")
-                Text("Кадр \(model.currentFrame + 1) / \(info.frameCount)")
-                Text(info.source == .embedded ? "TC из файла" : "TC не найден — с 00:00:00:00")
-                    .foregroundStyle(info.source == .embedded ? Color.secondary : Color.orange)
-            }
-            if info.isLikelyVariableFrameRate {
-                Text("Похоже на переменную частоту кадров — тайм-код и шаг по кадрам могут быть неточными.")
-                    .foregroundStyle(.orange)
-            }
-        }
-        .font(.footnote.monospacedDigit())
-        .foregroundStyle(.secondary)
+        .padding()
     }
 
     private func goToTimecode() {
@@ -246,6 +381,7 @@ struct PlayerScreen: View {
         do {
             let timecode = try Timecode(timecodeInput, rate: rate)
             timecodeInputError = model.seek(to: timecode) ? nil : "Тайм-код вне видео"
+            if timecodeInputError == nil { isGoToTimecodeShown = false }
         } catch TimecodeError.droppedFrameNumber {
             timecodeInputError = "Такого номера кадра нет в drop-frame"
         } catch {

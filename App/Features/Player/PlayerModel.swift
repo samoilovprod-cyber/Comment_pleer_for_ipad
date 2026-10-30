@@ -10,6 +10,7 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var fileName: String?
     @Published private(set) var speed: Float = 1
+    @Published private(set) var comments: [ReviewComment] = []
     @Published var errorMessage: String?
 
     let player = AVPlayer()
@@ -85,6 +86,21 @@ final class PlayerModel: ObservableObject {
         info = nil
         fileName = nil
         currentFrame = 0
+        comments = []
+    }
+
+    func addComment(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard info != nil, !text.isEmpty else { return }
+        comments.append(ReviewComment(frame: currentFrame, text: text))
+    }
+
+    func deleteComment(_ comment: ReviewComment) {
+        comments.removeAll { $0.id == comment.id }
+    }
+
+    func timecode(forFrame frame: Int) -> String {
+        info.map { ($0.startTimecode + frame).description } ?? "--:--:--:--"
     }
 
     func togglePlayPause() {
