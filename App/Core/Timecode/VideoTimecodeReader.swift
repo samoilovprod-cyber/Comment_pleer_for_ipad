@@ -8,11 +8,13 @@ struct VideoTimecodeInfo {
         case embedded
         /// В файле нет тайм-кода — отсчёт с 00:00:00:00.
         case assumedZero
+        /// Начало задано пользователем вручную.
+        case manual
     }
 
     let rate: FrameRate
-    let startTimecode: Timecode
-    let source: Source
+    var startTimecode: Timecode
+    var source: Source
     /// Время первого кадра видеотрека (обычно ноль).
     let videoStart: CMTime
     let duration: CMTime

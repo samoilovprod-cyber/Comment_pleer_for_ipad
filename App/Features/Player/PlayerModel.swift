@@ -15,6 +15,10 @@ final class PlayerModel: ObservableObject {
 
     let player = AVPlayer()
 
+    /// Начало тайм-кода, прочитанное из файла, — чтобы вернуться к нему после ручной правки.
+    private var detectedStart: (timecode: Timecode, source: VideoTimecodeInfo.Source)?
+    private(set) var asset: AVURLAsset?
+
     private var timeObserver: Any?
     private var rateObserver: NSKeyValueObservation?
     private var accessedURL: URL?
@@ -42,8 +46,14 @@ final class PlayerModel: ObservableObject {
         // Точная длительность и тайминг важны для покадровой навигации.
         let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         do {
-            let info = try await VideoTimecodeReader.read(from: asset)
+            var info = try await VideoTimecodeReader.read(from: asset)
+            detectedStart = (info.startTimecode, info.source)
+            if let manual = StartTimecodeStore.load(fileName: url.lastPathComponent, frameCount: info.frameCount, rate: info.rate) {
+                info.startTimecode = manual
+                info.source = .manual
+            }
             self.info = info
+            self.asset = asset
             currentFrame = 0
             player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
             player.defaultRate = speed
@@ -84,9 +94,29 @@ final class PlayerModel: ObservableObject {
         }
         importedCopyURL = nil
         info = nil
+        asset = nil
+        detectedStart = nil
         fileName = nil
         currentFrame = 0
         comments = []
+    }
+
+    /// Задаёт тайм-код первого кадра вручную. Комментарии привязаны к кадрам и остаются на месте.
+    func setStartTimecode(_ timecode: Timecode) {
+        guard var info, let fileName else { return }
+        info.startTimecode = timecode
+        info.source = .manual
+        self.info = info
+        StartTimecodeStore.save(timecode, fileName: fileName, frameCount: info.frameCount)
+    }
+
+    /// Возвращает тайм-код из файла (или 00:00:00:00, если в файле его нет).
+    func resetStartTimecode() {
+        guard var info, let fileName, let detectedStart else { return }
+        info.startTimecode = detectedStart.timecode
+        info.source = detectedStart.source
+        self.info = info
+        StartTimecodeStore.save(nil, fileName: fileName, frameCount: info.frameCount)
     }
 
     func addComment(_ text: String) {

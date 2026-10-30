@@ -7,7 +7,6 @@ struct CommentsPanel: View {
     let timecode: (Int) -> String
     let onSelect: (ReviewComment) -> Void
     let onDelete: (ReviewComment) -> Void
-    var isSearchFocused: FocusState<Bool>.Binding
 
     @State private var query = ""
 
@@ -29,7 +28,6 @@ struct CommentsPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                 TextField("Поиск по комментариям", text: $query)
-                    .focused(isSearchFocused)
                     .foregroundStyle(Theme.textPrimary)
             }
             .font(.subheadline)
