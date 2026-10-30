@@ -37,6 +37,21 @@ targets:
           UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown
           UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
 
+  CommentPlayerUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: CommentPlayer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.samoilovprod.commentplayer.uitests
+        TARGETED_DEVICE_FAMILY: "2"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: AHUWBSC593
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   CommentPlayer:
     build:
@@ -45,3 +60,4 @@ schemes:
     test:
       targets:
         - package: FrameTimecode/FrameTimecodeTests
+        - CommentPlayerUITests

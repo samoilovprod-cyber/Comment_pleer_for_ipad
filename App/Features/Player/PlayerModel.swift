@@ -1,6 +1,7 @@
 import AVFoundation
 import FrameTimecode
 import SwiftData
+import UIKit
 
 @MainActor
 final class PlayerModel: ObservableObject {
@@ -174,6 +175,43 @@ final class PlayerModel: ObservableObject {
         let url = URL.temporaryDirectory.appendingPathComponent("\(baseName)_\(timecode).png")
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    /// Собирает таблицу ревью: строки по порядку кадров, скриншоты уменьшены до размера из настроек.
+    func makeReport(options: ReportOptions, author: String) async throws -> ReviewReport {
+        guard let asset, let info, let fileName else { throw CocoaError(.fileNoSuchFile) }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        generator.maximumSize = CGSize(width: options.size.pixelWidth, height: options.size.pixelWidth)
+
+        let selected = comments
+            .filter { options.includeResolved || !$0.isResolved }
+            .sorted { ($0.frame, $0.createdAt) < ($1.frame, $1.createdAt) }
+        var rows: [ReviewReport.Row] = []
+        for (index, comment) in selected.enumerated() {
+            try Task.checkCancellation()
+            let annotation = comment.annotation
+            let needsImage = switch options.screenshots {
+            case .all: true
+            case .drawingsOnly: annotation != nil
+            case .none: false
+            }
+            var image: UIImage?
+            if needsImage {
+                let frame = try await generator.image(at: info.time(forFrame: comment.frame)).image
+                image = AnnotationRenderer.composite(frame: frame, annotation: annotation ?? Annotation(),
+                                                     frameSize: info.naturalSize)
+            }
+            rows.append(ReviewReport.Row(id: index, number: index + 1, timecode: timecode(forFrame: comment.frame),
+                                         department: comment.department, isResolved: comment.isResolved,
+                                         text: comment.text, hasDrawing: annotation != nil, image: image))
+        }
+        return ReviewReport(fileName: fileName, frameRate: info.rate.description,
+                            startTimecode: info.startTimecode.description,
+                            duration: Timecode(frameNumber: info.frameCount, rate: info.rate).description,
+                            date: .now, author: author, rows: rows)
     }
 
     func setDepartment(_ department: Department?, for comment: ReviewComment) {

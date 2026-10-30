@@ -30,6 +30,7 @@ struct PlayerScreen: View {
     @State private var commentText = ""
     @State private var isGoToTimecodeShown = false
     @State private var isMediaInfoShown = false
+    @State private var isExportShown = false
     @State private var startTimecodeInput = ""
     @State private var startTimecodeError: String?
     @FocusState private var isCommentFocused: Bool
@@ -88,7 +89,13 @@ struct PlayerScreen: View {
             }
         }
         .onChange(of: isMediaInfoShown) { _, shown in
-            if !shown { isPlayerFocused = true }
+            if !shown { focusPlayer() }
+        }
+        .sheet(isPresented: $isExportShown) {
+            ExportSheet(model: model)
+        }
+        .onChange(of: isExportShown) { _, shown in
+            if !shown { focusPlayer() }
         }
         .alert("Edit Comment", isPresented: Binding(get: { editingComment != nil },
                                                     set: { if !$0 { editingComment = nil } })) {
@@ -100,7 +107,7 @@ struct PlayerScreen: View {
             Button("Cancel", role: .cancel) { editingComment = nil }
         }
         .onChange(of: editingComment == nil) { _, closed in
-            if closed { isPlayerFocused = true }
+            if closed { focusPlayer() }
         }
         .sheet(item: $sharedImage) { file in
             ShareSheet(items: [file.url])
@@ -147,6 +154,10 @@ struct PlayerScreen: View {
                 .disabled(isCopyingVideo)
                 Spacer()
                 if model.asset != nil {
+                    Button("Export Review", systemImage: "square.and.arrow.up") { isExportShown = true }
+                        .labelStyle(.iconOnly)
+                        .font(.title3)
+                        .disabled(model.comments.isEmpty)
                     Button("File info", systemImage: "info.circle") { isMediaInfoShown = true }
                         .labelStyle(.iconOnly)
                         .font(.title3)
@@ -252,25 +263,35 @@ struct PlayerScreen: View {
         }
     }
 
-    /// Всё, что ловит клавиши плеера, когда фокус не в текстовом поле.
+    /// Клавиши плеера ловит невидимый слой позади интерфейса, а не контейнер вокруг него:
+    /// так он не перехватывает касания холста (иначе с клавиатурой Pencil не рисует)
+    /// и не получает нажатия, пока печатают в поле комментария.
     private func keyHandling<Content: View>(_ content: Content) -> some View {
-        // В режиме рисования плеер не держит фокус: с подключённой клавиатурой фокусируемый
-        // контейнер перехватывает касания и Apple Pencil не рисует. ⌘Z/Esc там — шорткаты тулбара.
         content
-            .focusable(!annotator.isActive)
-            .focusEffectDisabled()
-            .focused($isPlayerFocused)
-            .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
-            .onAppear { isPlayerFocused = true }
+            .background {
+                // Непрозрачный фон: прозрачный SwiftUI фокус не отдаёт.
+                Theme.background
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($isPlayerFocused)
+                    .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
+            }
+            .onAppear { focusPlayer() }
             .onChange(of: isCommentFocused) { _, focused in
-                if !focused { isPlayerFocused = true }
+                if !focused { focusPlayer() }
             }
             .onChange(of: isGoToTimecodeShown) { _, shown in
-                if !shown { isPlayerFocused = true }
+                if !shown { focusPlayer() }
             }
             .onChange(of: annotator.isActive) { _, active in
-                if !active { isPlayerFocused = true }
+                if !active { focusPlayer() }
             }
+    }
+
+    /// Возвращает клавиши плееру. Отдельным шагом: в том же обновлении, где поле
+    /// теряет фокус, SwiftUI новый фокус не принимает.
+    private func focusPlayer() {
+        DispatchQueue.main.async { isPlayerFocused = true }
     }
 
     private func playerColumn(info: VideoTimecodeInfo) -> some View {
@@ -282,7 +303,7 @@ struct PlayerScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(jogGesture, isEnabled: !annotator.isActive)
-                .gesture(TapGesture().onEnded { isCommentFocused = false; isPlayerFocused = true },
+                .gesture(TapGesture().onEnded { isCommentFocused = false; focusPlayer() },
                          isEnabled: !annotator.isActive)
                 .padding(16)
 
@@ -349,6 +370,7 @@ struct PlayerScreen: View {
             HStack(spacing: 6) {
                 Text(model.currentTimecode?.description ?? "--:--:--:--")
                     .foregroundStyle(Theme.textPrimary)
+                    .accessibilityIdentifier("currentTimecode")
                 Text("/ \(info.endTimecode.description)")
                     .foregroundStyle(Theme.textSecondary)
             }
@@ -366,11 +388,17 @@ struct PlayerScreen: View {
             TextField("Leave a comment…", text: $commentText, axis: .vertical)
                 .lineLimit(1...4)
                 .focused($isCommentFocused)
+                .accessibilityIdentifier("commentField")
                 .foregroundStyle(Theme.textPrimary)
                 .onSubmit(submitComment)
-                .onKeyPress(.escape) {
-                    isCommentFocused = false
-                    return .handled
+                .background {
+                    // Esc само поле не получает (его съедает системный ввод) — ловим шорткатом.
+                    if isCommentFocused && !annotator.isActive {
+                        Button("Leave comment field") { isCommentFocused = false }
+                            .keyboardShortcut(.escape, modifiers: [])
+                            .opacity(0)
+                            .accessibilityHidden(true)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -389,6 +417,7 @@ struct PlayerScreen: View {
             .buttonStyle(.plain)
             .disabled(annotator.isActive && annotator.comment != nil)
             .accessibilityLabel(annotator.isActive ? "Discard drawing" : "Draw on frame")
+            .accessibilityIdentifier("drawButton")
 
             departmentMenu
             TimecodeChip(text: model.currentTimecode?.description ?? "--:--:--:--", isProminent: true)
@@ -454,7 +483,7 @@ struct PlayerScreen: View {
 
     private func cancelDrawing() {
         annotator.end()
-        isPlayerFocused = true
+        focusPlayer()
     }
 
     private func editDrawing(_ comment: ReviewComment) {
@@ -469,7 +498,7 @@ struct PlayerScreen: View {
             model.setAnnotation(annotator.annotation, for: comment)
         }
         annotator.end()
-        isPlayerFocused = true
+        focusPlayer()
     }
 
     private func shareImage(_ comment: ReviewComment) {
@@ -543,7 +572,8 @@ struct PlayerScreen: View {
     /// Клавиатура: пробел, ←/→ (⇧ — 10 кадров, ⌥ — секунда), J/K/L; K+J/L — шаг по кадру.
     /// Русская раскладка тоже работает: О/Л/Д на месте J/K/L.
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        if annotator.isActive { return .ignored }
+        // В режиме рисования ⌘Z/⇧⌘Z/Esc — шорткаты тулбара.
+        if annotator.isActive || isCommentFocused { return .ignored }
         let isPressed = press.phase != .up
         switch press.key {
         case .space:
