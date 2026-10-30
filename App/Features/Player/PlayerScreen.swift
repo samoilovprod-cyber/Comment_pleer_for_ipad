@@ -30,6 +30,7 @@ struct PlayerScreen: View {
     @State private var commentText = ""
     @State private var isGoToTimecodeShown = false
     @State private var isMediaInfoShown = false
+    @State private var isExportShown = false
     @State private var startTimecodeInput = ""
     @State private var startTimecodeError: String?
     @FocusState private var isCommentFocused: Bool
@@ -90,6 +91,12 @@ struct PlayerScreen: View {
         .onChange(of: isMediaInfoShown) { _, shown in
             if !shown { isPlayerFocused = true }
         }
+        .sheet(isPresented: $isExportShown) {
+            ExportSheet(model: model)
+        }
+        .onChange(of: isExportShown) { _, shown in
+            if !shown { isPlayerFocused = true }
+        }
         .alert("Edit Comment", isPresented: Binding(get: { editingComment != nil },
                                                     set: { if !$0 { editingComment = nil } })) {
             TextField("Comment", text: $editText, axis: .vertical)
@@ -147,6 +154,10 @@ struct PlayerScreen: View {
                 .disabled(isCopyingVideo)
                 Spacer()
                 if model.asset != nil {
+                    Button("Export Review", systemImage: "square.and.arrow.up") { isExportShown = true }
+                        .labelStyle(.iconOnly)
+                        .font(.title3)
+                        .disabled(model.comments.isEmpty)
                     Button("File info", systemImage: "info.circle") { isMediaInfoShown = true }
                         .labelStyle(.iconOnly)
                         .font(.title3)
