@@ -18,6 +18,9 @@ struct PlayerScreen: View {
     @State private var timecodeInputError: String?
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.modelContext) private var modelContext
+    @State private var editingComment: ReviewComment?
+    @State private var editText = ""
     @State private var commentText = ""
     @State private var isGoToTimecodeShown = false
     @State private var isMediaInfoShown = false
@@ -81,7 +84,22 @@ struct PlayerScreen: View {
         .onChange(of: isMediaInfoShown) { _, shown in
             if !shown { isPlayerFocused = true }
         }
-        .task { await model.restoreLastVideo() }
+        .alert("Edit Comment", isPresented: Binding(get: { editingComment != nil },
+                                                    set: { if !$0 { editingComment = nil } })) {
+            TextField("Comment", text: $editText, axis: .vertical)
+            Button("Save") {
+                if let editingComment { model.updateComment(editingComment, text: editText) }
+                editingComment = nil
+            }
+            Button("Cancel", role: .cancel) { editingComment = nil }
+        }
+        .onChange(of: editingComment == nil) { _, closed in
+            if closed { isPlayerFocused = true }
+        }
+        .task {
+            model.attach(modelContext)
+            await model.restoreLastVideo()
+        }
         .alert("Couldn't open the video", isPresented: .constant(model.errorMessage != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
@@ -195,6 +213,11 @@ struct PlayerScreen: View {
                                      currentFrame: model.currentFrame,
                                      timecode: model.timecode(forFrame:),
                                      onSelect: { model.scrub(toFrame: $0.frame) },
+                                     onToggleResolved: model.toggleResolved,
+                                     onEdit: { comment in
+                                         editText = comment.text
+                                         editingComment = comment
+                                     },
                                      onDelete: model.deleteComment)
         if horizontalSizeClass == .compact {
             VStack(spacing: 0) {
@@ -247,7 +270,8 @@ struct PlayerScreen: View {
     private func controlBar(info: VideoTimecodeInfo) -> some View {
         VStack(spacing: 4) {
             ScrubberView(frame: model.currentFrame, frameCount: info.frameCount,
-                         markers: model.comments.map(\.frame)) { model.scrub(toFrame: $0) }
+                         markers: model.comments.filter { !$0.isResolved }.map(\.frame),
+                         resolvedMarkers: model.comments.filter(\.isResolved).map(\.frame)) { model.scrub(toFrame: $0) }
 
             HStack(spacing: 12) {
                 transportControls

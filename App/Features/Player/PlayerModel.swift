@@ -1,5 +1,6 @@
 import AVFoundation
 import FrameTimecode
+import SwiftData
 
 @MainActor
 final class PlayerModel: ObservableObject {
@@ -19,6 +20,9 @@ final class PlayerModel: ObservableObject {
     private var detectedStart: (timecode: Timecode, source: VideoTimecodeInfo.Source)?
     private(set) var asset: AVURLAsset?
 
+    private var modelContext: ModelContext?
+    private var video: ReviewVideo?
+
     private var timeObserver: Any?
     private var rateObserver: NSKeyValueObservation?
     private var accessedURL: URL?
@@ -32,6 +36,11 @@ final class PlayerModel: ObservableObject {
 
     var currentTimecode: Timecode? {
         info.map { $0.startTimecode + currentFrame }
+    }
+
+    /// Хранилище комментариев — подключается из View, где доступен `modelContext`.
+    func attach(_ context: ModelContext) {
+        modelContext = context
     }
 
     func open(url: URL, isImportedCopy: Bool = false) async {
@@ -54,6 +63,7 @@ final class PlayerModel: ObservableObject {
             }
             self.info = info
             self.asset = asset
+            loadComments(fileName: url.lastPathComponent, frameCount: info.frameCount)
             currentFrame = 0
             player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
             player.defaultRate = speed
@@ -99,6 +109,7 @@ final class PlayerModel: ObservableObject {
         fileName = nil
         currentFrame = 0
         comments = []
+        video = nil
     }
 
     /// Задаёт тайм-код первого кадра вручную. Комментарии привязаны к кадрам и остаются на месте.
@@ -122,11 +133,66 @@ final class PlayerModel: ObservableObject {
     func addComment(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard info != nil, !text.isEmpty else { return }
-        comments.append(ReviewComment(frame: currentFrame, text: text))
+        let comment = ReviewComment(frame: currentFrame, text: text)
+        if let video, let modelContext {
+            modelContext.insert(comment)
+            comment.video = video
+        }
+        saveAndRefresh(adding: comment)
+    }
+
+    func updateComment(_ comment: ReviewComment, text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text != comment.text else { return }
+        comment.text = text
+        comment.editedAt = .now
+        saveAndRefresh()
+    }
+
+    func toggleResolved(_ comment: ReviewComment) {
+        comment.isResolved.toggle()
+        saveAndRefresh()
     }
 
     func deleteComment(_ comment: ReviewComment) {
-        comments.removeAll { $0.id == comment.id }
+        comments.removeAll { $0 === comment }
+        if let video = comment.video {
+            video.comments.removeAll { $0 === comment }
+            modelContext?.delete(comment)
+        }
+        saveAndRefresh()
+    }
+
+    /// Находит (или заводит) запись видео и подгружает его комментарии.
+    private func loadComments(fileName: String, frameCount: Int) {
+        guard let modelContext else { return }
+        let key = ReviewVideo.key(fileName: fileName, frameCount: frameCount)
+        let descriptor = FetchDescriptor<ReviewVideo>(predicate: #Predicate { $0.fileKey == key })
+        if let existing = try? modelContext.fetch(descriptor).first {
+            video = existing
+        } else {
+            let created = ReviewVideo(fileKey: key, fileName: fileName)
+            modelContext.insert(created)
+            video = created
+        }
+        comments = Self.sorted(video?.comments ?? [])
+    }
+
+    private func saveAndRefresh(adding comment: ReviewComment? = nil) {
+        do {
+            try modelContext?.save()
+        } catch {
+            errorMessage = "Couldn't save comments: \(error.localizedDescription)"
+        }
+        var all = (video?.comments ?? comments).filter { !$0.isDeleted }
+        if let comment, !all.contains(where: { $0 === comment }) {
+            all.append(comment)
+        }
+        comments = Self.sorted(all)
+    }
+
+    private static func sorted(_ comments: [ReviewComment]) -> [ReviewComment] {
+        comments.sorted { ($0.frame, $0.createdAt) < ($1.frame, $1.createdAt) }
     }
 
     func timecode(forFrame frame: Int) -> String {

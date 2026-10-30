@@ -6,15 +6,31 @@ struct CommentsPanel: View {
     let currentFrame: Int
     let timecode: (Int) -> String
     let onSelect: (ReviewComment) -> Void
+    let onToggleResolved: (ReviewComment) -> Void
+    let onEdit: (ReviewComment) -> Void
     let onDelete: (ReviewComment) -> Void
 
+    enum Filter: String, CaseIterable {
+        case all = "All"
+        case open = "Open"
+        case resolved = "Resolved"
+    }
+
     @State private var query = ""
+    @State private var filter = Filter.all
 
     private var filtered: [ReviewComment] {
-        let sorted = comments.sorted { ($0.frame, $0.createdAt) < ($1.frame, $1.createdAt) }
-        guard !query.isEmpty else { return sorted }
-        return sorted.filter { $0.text.localizedCaseInsensitiveContains(query) }
+        comments.filter { comment in
+            switch filter {
+            case .all: true
+            case .open: !comment.isResolved
+            case .resolved: comment.isResolved
+            }
+        }
+        .filter { query.isEmpty || $0.text.localizedCaseInsensitiveContains(query) }
     }
+
+    private var openCount: Int { comments.filter { !$0.isResolved }.count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -38,10 +54,21 @@ struct CommentsPanel: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
 
+            Picker("Filter", selection: $filter) {
+                ForEach(Filter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+
             if comments.isEmpty {
                 ContentUnavailableView("No comments yet",
                                        systemImage: "text.bubble",
                                        description: Text("Pause on a frame and type a comment below."))
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxHeight: .infinity)
+            } else if filtered.isEmpty {
+                ContentUnavailableView.search
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxHeight: .infinity)
             } else {
@@ -59,7 +86,7 @@ struct CommentsPanel: View {
     }
 
     private var commentsCountLabel: String {
-        comments.isEmpty ? "Comments" : "\(comments.count) Comments"
+        comments.isEmpty ? "Comments" : "\(comments.count) \(comments.count == 1 ? "Comment" : "Comments") · \(openCount) open"
     }
 
     private func row(_ comment: ReviewComment) -> some View {
@@ -68,6 +95,7 @@ struct CommentsPanel: View {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.title2)
                     .foregroundStyle(Theme.textSecondary)
+                    .opacity(comment.isResolved ? 0.5 : 1)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text("You")
@@ -77,13 +105,28 @@ struct CommentsPanel: View {
                     }
                     Text(comment.text)
                         .font(.subheadline)
-                        .foregroundStyle(Theme.textPrimary)
+                        .foregroundStyle(comment.isResolved ? Theme.textSecondary : Theme.textPrimary)
+                        .strikethrough(comment.isResolved)
                         .multilineTextAlignment(.leading)
-                    Text(comment.createdAt, format: .relative(presentation: .named))
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
+                    HStack(spacing: 4) {
+                        Text(comment.createdAt, format: .relative(presentation: .named))
+                        if comment.editedAt != nil {
+                            Text("· edited")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
                 }
                 Spacer(minLength: 0)
+                Button {
+                    onToggleResolved(comment)
+                } label: {
+                    Image(systemName: comment.isResolved ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(comment.isResolved ? Color.green : Theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(comment.isResolved ? "Reopen" : "Mark as resolved")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -92,6 +135,12 @@ struct CommentsPanel: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button("Edit", systemImage: "pencil") { onEdit(comment) }
+            Button(comment.isResolved ? "Reopen" : "Mark as Resolved",
+                   systemImage: comment.isResolved ? "arrow.uturn.backward.circle" : "checkmark.circle") {
+                onToggleResolved(comment)
+            }
+            Divider()
             Button("Delete", systemImage: "trash", role: .destructive) { onDelete(comment) }
         }
     }
