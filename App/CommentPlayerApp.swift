@@ -5,10 +5,10 @@ import SwiftUI
 struct CommentPlayerApp: App {
     var body: some Scene {
         WindowGroup {
-            PlayerScreen()
+            RootView()
                 // Интерфейс на английском независимо от языка устройства (даты, «2 minutes ago» и т.п.).
                 .environment(\.locale, Locale(identifier: "en_US"))
         }
-        .modelContainer(for: [ReviewVideo.self, ReviewComment.self])
+        .modelContainer(for: [LibraryItem.self, ReviewVideo.self, ReviewComment.self])
     }
 }

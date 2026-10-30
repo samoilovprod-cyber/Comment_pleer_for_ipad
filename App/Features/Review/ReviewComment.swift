@@ -1,8 +1,8 @@
 import Foundation
 import SwiftData
 
-/// Видео, к которому пишутся комментарии. Узнаём файл по имени и числу кадров —
-/// так комментарии находятся и для копии из «Фото», и для того же файла из «Файлов».
+/// Одна версия ролика в библиотеке — конкретный файл со своими комментариями.
+/// `fileKey` (имя + число кадров) нужен, чтобы узнать файл, у которого уже есть комментарии.
 @Model
 final class ReviewVideo {
     var fileKey: String
@@ -10,6 +10,19 @@ final class ReviewVideo {
     var createdAt: Date
     @Relationship(deleteRule: .cascade, inverse: \ReviewComment.video)
     var comments: [ReviewComment] = []
+
+    /// Ролик, к которому относится версия; nil — запись из прошлых версий приложения (до библиотеки).
+    var item: LibraryItem?
+    /// Номер версии внутри ролика: v1, v2…
+    var versionNumber: Int = 1
+    /// Security-scoped закладка на файл из «Файлов».
+    var bookmark: Data?
+    /// Копия из «Фото» — путь относительно Application Support (абсолютный меняется при переустановке).
+    var importedPath: String?
+    @Attribute(.externalStorage) var thumbnailData: Data?
+    var frameCount: Int = 0
+    var frameRateLabel: String = ""
+    var durationLabel: String = ""
 
     init(fileKey: String, fileName: String) {
         self.fileKey = fileKey
@@ -20,6 +33,10 @@ final class ReviewVideo {
     static func key(fileName: String, frameCount: Int) -> String {
         "\(fileName)#\(frameCount)"
     }
+
+    var versionLabel: String { "v\(versionNumber)" }
+    var openCommentCount: Int { comments.filter { !$0.isResolved }.count }
+    var hasFile: Bool { bookmark != nil || importedPath != nil }
 }
 
 /// Цех, которому адресован комментарий.

@@ -22,13 +22,12 @@ final class PlayerModel: ObservableObject {
     private(set) var asset: AVURLAsset?
 
     private var modelContext: ModelContext?
-    private var video: ReviewVideo?
+    /// Открытая версия ролика из библиотеки.
+    @Published private(set) var video: ReviewVideo?
 
     private var timeObserver: Any?
     private var rateObserver: NSKeyValueObservation?
-    private var accessedURL: URL?
-    /// Наша копия видео из «Фото» или перетащенного файла — удаляем её при закрытии.
-    private var importedCopyURL: URL?
+    private var fileAccess: MediaLibrary.FileAccess?
     private var isSeekInFlight = false
     /// Куда перемотать, когда закончится текущая перемотка: при скрабе и удержании кнопок важна только последняя цель.
     private var queuedSeekFrame: Int?
@@ -44,46 +43,40 @@ final class PlayerModel: ObservableObject {
         modelContext = context
     }
 
-    func open(url: URL, isImportedCopy: Bool = false) async {
+    /// Открывает версию из библиотеки; комментарии — этой версии.
+    func open(video: ReviewVideo) async {
         close()
-        if isImportedCopy {
-            importedCopyURL = url
-        } else if url.startAccessingSecurityScopedResource() {
-            accessedURL = url
+        guard let access = MediaLibrary.access(video) else {
+            errorMessage = MediaLibrary.LibraryError.fileMissing(video.fileName).localizedDescription
+            return
         }
-        fileName = url.lastPathComponent
+        fileAccess = access
+        fileName = video.fileName
 
         // Точная длительность и тайминг важны для покадровой навигации.
-        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let asset = AVURLAsset(url: access.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         do {
             var info = try await VideoTimecodeReader.read(from: asset)
             detectedStart = (info.startTimecode, info.source)
-            if let manual = StartTimecodeStore.load(fileName: url.lastPathComponent, frameCount: info.frameCount, rate: info.rate) {
+            if let manual = StartTimecodeStore.load(fileName: video.fileName, frameCount: info.frameCount, rate: info.rate) {
                 info.startTimecode = manual
                 info.source = .manual
             }
             self.info = info
             self.asset = asset
-            loadComments(fileName: url.lastPathComponent, frameCount: info.frameCount)
+            self.video = video
+            comments = Self.sorted(video.comments)
             currentFrame = 0
             player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
             player.defaultRate = speed
             observePlayer(frameDuration: info.rate.frameDuration)
-            LastVideoStore.save(url: url, isImportedCopy: isImportedCopy)
+            if video.thumbnailData == nil || video.frameCount != info.frameCount {
+                await MediaLibrary.updateMetadata(of: video, asset: asset, info: info)
+                try? modelContext?.save()
+            }
         } catch {
             errorMessage = error.localizedDescription
             close()
-        }
-    }
-
-    /// Открывает видео, которое было открыто при прошлом запуске.
-    func restoreLastVideo() async {
-        guard info == nil, let last = LastVideoStore.load() else { return }
-        await open(url: last.url, isImportedCopy: last.isImportedCopy)
-        if info == nil {
-            // Файл удалён или недоступен — молча забываем его.
-            errorMessage = nil
-            LastVideoStore.clear()
         }
     }
 
@@ -98,12 +91,8 @@ final class PlayerModel: ObservableObject {
         shuttleRate = 0
         player.pause()
         player.replaceCurrentItem(with: nil)
-        accessedURL?.stopAccessingSecurityScopedResource()
-        accessedURL = nil
-        if let importedCopyURL {
-            try? FileManager.default.removeItem(at: importedCopyURL.deletingLastPathComponent())
-        }
-        importedCopyURL = nil
+        fileAccess?.stop()
+        fileAccess = nil
         info = nil
         asset = nil
         detectedStart = nil
@@ -231,21 +220,6 @@ final class PlayerModel: ObservableObject {
             modelContext?.delete(comment)
         }
         saveAndRefresh()
-    }
-
-    /// Находит (или заводит) запись видео и подгружает его комментарии.
-    private func loadComments(fileName: String, frameCount: Int) {
-        guard let modelContext else { return }
-        let key = ReviewVideo.key(fileName: fileName, frameCount: frameCount)
-        let descriptor = FetchDescriptor<ReviewVideo>(predicate: #Predicate { $0.fileKey == key })
-        if let existing = try? modelContext.fetch(descriptor).first {
-            video = existing
-        } else {
-            let created = ReviewVideo(fileKey: key, fileName: fileName)
-            modelContext.insert(created)
-            video = created
-        }
-        comments = Self.sorted(video?.comments ?? [])
     }
 
     private func saveAndRefresh(adding comment: ReviewComment? = nil) {

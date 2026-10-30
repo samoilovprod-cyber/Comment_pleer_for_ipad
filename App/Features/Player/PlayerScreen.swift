@@ -1,9 +1,12 @@
 import FrameTimecode
-import PhotosUI
+import SwiftData
 import SwiftUI
-import UniformTypeIdentifiers
 
+/// Плеер одной версии ролика: покадровый просмотр, комментарии, рисование.
 struct PlayerScreen: View {
+    /// Версия, с которой открыли плеер; дальше можно переключаться между версиями ролика.
+    let video: ReviewVideo
+
     /// Сколько точек горизонтального свайпа по видео — один кадр.
     private static let jogPointsPerFrame: CGFloat = 8
 
@@ -12,17 +15,14 @@ struct PlayerScreen: View {
     /// PNG кадра с пометками, готовый к отправке.
     @State private var sharedImage: SharedFile?
     @State private var isExportingImage = false
-    @State private var isImporting = false
-    @State private var isPickingFromPhotos = false
-    @State private var photosSelection: PhotosPickerItem?
-    @State private var isCopyingVideo = false
-    @State private var isDropTargeted = false
     @State private var jogStartFrame: Int?
     @State private var timecodeInput = ""
     @State private var timecodeInputError: String?
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var router: Router
     @State private var editingComment: ReviewComment?
     /// Цех для новых комментариев — запоминается между запусками.
     @AppStorage("composerDepartment") private var composerDepartmentRaw = ""
@@ -46,43 +46,11 @@ struct PlayerScreen: View {
             if let info = model.info {
                 keyHandling(reviewLayout(info: info))
             } else {
-                emptyState
+                loadingState
             }
         }
         .background(Theme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
-        .tint(Theme.accent)
-        .overlay {
-            if isCopyingVideo {
-                ProgressView("Copying video…")
-                    .padding(24)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            } else if isDropTargeted {
-                RoundedRectangle(cornerRadius: 16)
-                    .strokeBorder(.tint, style: StrokeStyle(lineWidth: 4, dash: [12]))
-                    .padding(8)
-                    .allowsHitTesting(false)
-            }
-        }
-        // Перетаскивание из «Файлов», «Фото» и других приложений в Split View / Stage Manager.
-        .dropDestination(for: PickedMovie.self) { movies, _ in
-            guard let movie = movies.first else { return false }
-            Task { await model.open(url: movie.url, isImportedCopy: true) }
-            return true
-        } isTargeted: { isDropTargeted = $0 }
-        .fileImporter(isPresented: $isImporting, allowedContentTypes: [.movie, .quickTimeMovie, .mpeg4Movie]) { result in
-            if case let .success(url) = result {
-                Task { await model.open(url: url) }
-            }
-        }
-        // .current — без перекодирования: сохраняем исходные кадры, частоту и трек тайм-кода.
-        .photosPicker(isPresented: $isPickingFromPhotos, selection: $photosSelection,
-                      matching: .videos, preferredItemEncoding: .current)
-        .onChange(of: photosSelection) { _, item in
-            guard let item else { return }
-            photosSelection = nil
-            Task { await openFromPhotos(item) }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isMediaInfoShown) {
             if let asset = model.asset {
                 MediaInfoSheet(asset: asset, timecode: model.info)
@@ -121,20 +89,21 @@ struct PlayerScreen: View {
         }
         .task {
             model.attach(modelContext)
-            await model.restoreLastVideo()
+            await model.open(video: video)
         }
-        .alert("Couldn't open the video", isPresented: .constant(model.errorMessage != nil)) {
+        .onDisappear { model.close() }
+        .alert("Something went wrong", isPresented: .constant(model.errorMessage != nil && model.info != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "")
         }
     }
 
-    /// Шапка: кнопка открытия слева, имя файла и параметры видео по центру.
+    /// Шапка: назад в библиотеку и версия слева, название ролика и параметры видео по центру.
     private var header: some View {
         ZStack {
             VStack(spacing: 2) {
-                Text(model.fileName ?? "Comment Player")
+                Text(model.video?.item?.title ?? model.fileName ?? video.fileName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
@@ -142,17 +111,24 @@ struct PlayerScreen: View {
                     headerSubtitle(info)
                 }
             }
-            .padding(.horizontal, 140)
+            .padding(.horizontal, 220)
 
-            HStack {
-                Menu {
-                    openSourceButtons
+            HStack(spacing: 16) {
+                Button {
+                    dismiss()
                 } label: {
-                    Label("Open", systemImage: "film")
+                    Label("Library", systemImage: "chevron.left")
                         .font(.subheadline.weight(.medium))
                 }
-                .disabled(isCopyingVideo)
+                versionMenu
                 Spacer()
+                if let current = model.video, let other = compareCandidate(for: current) {
+                    Button("Compare Versions", systemImage: "rectangle.split.2x1") {
+                        router.compare(other, current)
+                    }
+                    .labelStyle(.iconOnly)
+                    .font(.title3)
+                }
                 if model.asset != nil {
                     Button("Export Review", systemImage: "square.and.arrow.up") { isExportShown = true }
                         .labelStyle(.iconOnly)
@@ -197,43 +173,73 @@ struct PlayerScreen: View {
         }
     }
 
-    private var emptyState: some View {
-        ContentUnavailableView {
-            Label("No Video", systemImage: "film.stack")
-        } description: {
-            Text("Open a MOV or MP4 (ProRes, H.264, HEVC) or drop a file here.")
-        } actions: {
-            HStack {
-                openSourceButtons
+    private var loadingState: some View {
+        Group {
+            if model.errorMessage == nil {
+                ProgressView()
+            } else {
+                ContentUnavailableView {
+                    Label("Video Unavailable", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(model.errorMessage ?? "")
+                } actions: {
+                    Button("Back to Library") { dismiss() }
+                        .buttonStyle(.borderedProminent)
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(isCopyingVideo)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Номер открытой версии; меню — переключиться на другую версию ролика.
     @ViewBuilder
-    private var openSourceButtons: some View {
-        Button("From Files", systemImage: "folder") { isImporting = true }
-        Button("From Photos", systemImage: "photo.on.rectangle") { isPickingFromPhotos = true }
-    }
-
-    private func openFromPhotos(_ item: PhotosPickerItem) async {
-        isCopyingVideo = true
-        defer { isCopyingVideo = false }
-        do {
-            guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
-                model.errorMessage = "The selected item is not a video."
-                return
+    private var versionMenu: some View {
+        if let current = model.video ?? Optional(video), let item = current.item {
+            Menu {
+                ForEach(item.sortedVersions.reversed()) { version in
+                    Button {
+                        Task { await switchVersion(to: version) }
+                    } label: {
+                        if version === current {
+                            Label("\(version.versionLabel) · \(version.fileName)", systemImage: "checkmark")
+                        } else {
+                            Text("\(version.versionLabel) · \(version.fileName)")
+                        }
+                    }
+                }
+                Divider()
+                Button("All Versions", systemImage: "square.stack") {
+                    router.path.append(.versions(item.persistentModelID))
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(current.versionLabel).font(.subheadline.weight(.bold))
+                    Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: 6))
             }
-            await model.open(url: movie.url, isImportedCopy: true)
-        } catch {
-            model.errorMessage = error.localizedDescription
+            .accessibilityIdentifier("versionMenu")
         }
     }
 
+    /// С какой версией сравнивать: предыдущая, а для v1 — следующая.
+    private func compareCandidate(for current: ReviewVideo) -> ReviewVideo? {
+        guard let versions = current.item?.sortedVersions, versions.count >= 2,
+              let index = versions.firstIndex(where: { $0 === current }) else { return nil }
+        return index > 0 ? versions[index - 1] : versions[index + 1]
+    }
+
+    private func switchVersion(to version: ReviewVideo) async {
+        guard version !== model.video else { return }
+        if annotator.isActive { annotator.end() }
+        await model.open(video: version)
+        focusPlayer()
+    }
+
     /// Видео с панелью управления и полем комментария; справа — список комментариев
-    /// (в узком окне Split View — снизу).
+    /// (в портрете и узком окне Split View — снизу).
     @ViewBuilder
     private func reviewLayout(info: VideoTimecodeInfo) -> some View {
         let comments = CommentsPanel(comments: model.comments,
@@ -249,16 +255,20 @@ struct PlayerScreen: View {
                                      onEditDrawing: editDrawing,
                                      onShareImage: shareImage,
                                      onDelete: model.deleteComment)
-        if horizontalSizeClass == .compact {
-            VStack(spacing: 0) {
-                playerColumn(info: info)
-                comments.frame(height: 260)
-            }
-        } else {
-            HStack(spacing: 0) {
-                playerColumn(info: info)
-                Rectangle().fill(Theme.separator).frame(width: 1)
-                comments.frame(width: 320)
+        // Панели управления нужно ~700 pt: в портрете и узком Split View комментарии уходят вниз.
+        GeometryReader { geometry in
+            if horizontalSizeClass == .compact || geometry.size.width < 1000 {
+                VStack(spacing: 0) {
+                    playerColumn(info: info)
+                    Rectangle().fill(Theme.separator).frame(height: 1)
+                    comments.frame(height: min(320, geometry.size.height * 0.35))
+                }
+            } else {
+                HStack(spacing: 0) {
+                    playerColumn(info: info)
+                    Rectangle().fill(Theme.separator).frame(width: 1)
+                    comments.frame(width: 320)
+                }
             }
         }
     }
