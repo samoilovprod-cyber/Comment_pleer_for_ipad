@@ -130,10 +130,10 @@ final class PlayerModel: ObservableObject {
         StartTimecodeStore.save(nil, fileName: fileName, frameCount: info.frameCount)
     }
 
-    func addComment(_ text: String) {
+    func addComment(_ text: String, department: Department?) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard info != nil, !text.isEmpty else { return }
-        let comment = ReviewComment(frame: currentFrame, text: text)
+        let comment = ReviewComment(frame: currentFrame, text: text, department: department)
         if let video, let modelContext {
             modelContext.insert(comment)
             comment.video = video
@@ -146,6 +146,11 @@ final class PlayerModel: ObservableObject {
         guard !text.isEmpty, text != comment.text else { return }
         comment.text = text
         comment.editedAt = .now
+        saveAndRefresh()
+    }
+
+    func setDepartment(_ department: Department?, for comment: ReviewComment) {
+        comment.department = department
         saveAndRefresh()
     }
 

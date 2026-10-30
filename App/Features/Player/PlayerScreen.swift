@@ -20,6 +20,8 @@ struct PlayerScreen: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.modelContext) private var modelContext
     @State private var editingComment: ReviewComment?
+    /// Цех для новых комментариев — запоминается между запусками.
+    @AppStorage("composerDepartment") private var composerDepartmentRaw = ""
     @State private var editText = ""
     @State private var commentText = ""
     @State private var isGoToTimecodeShown = false
@@ -214,6 +216,7 @@ struct PlayerScreen: View {
                                      timecode: model.timecode(forFrame:),
                                      onSelect: { model.scrub(toFrame: $0.frame) },
                                      onToggleResolved: model.toggleResolved,
+                                     onSetDepartment: { model.setDepartment($1, for: $0) },
                                      onEdit: { comment in
                                          editText = comment.text
                                          editingComment = comment
@@ -328,6 +331,7 @@ struct PlayerScreen: View {
                     if focused, model.isPlaying { model.stop() }
                 }
 
+            departmentMenu
             TimecodeChip(text: model.currentTimecode?.description ?? "--:--:--:--", isProminent: true)
 
             Button("Submit", action: submitComment)
@@ -338,8 +342,29 @@ struct PlayerScreen: View {
         .background(Theme.panel)
     }
 
+    private var composerDepartment: Department? {
+        Department(rawValue: composerDepartmentRaw)
+    }
+
+    /// Выбор цеха для нового комментария.
+    private var departmentMenu: some View {
+        Menu {
+            Picker("Department", selection: $composerDepartmentRaw) {
+                Text("No Department").tag("")
+                ForEach(Department.allCases) { department in
+                    Text("\(department.label) — \(department.title)").tag(department.rawValue)
+                }
+            }
+        } label: {
+            DepartmentChip(department: composerDepartment)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Department")
+    }
+
     private func submitComment() {
-        model.addComment(commentText)
+        model.addComment(commentText, department: composerDepartment)
         commentText = ""
         isCommentFocused = false
     }

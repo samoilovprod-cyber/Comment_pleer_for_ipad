@@ -7,6 +7,7 @@ struct CommentsPanel: View {
     let timecode: (Int) -> String
     let onSelect: (ReviewComment) -> Void
     let onToggleResolved: (ReviewComment) -> Void
+    let onSetDepartment: (ReviewComment, Department?) -> Void
     let onEdit: (ReviewComment) -> Void
     let onDelete: (ReviewComment) -> Void
 
@@ -18,6 +19,8 @@ struct CommentsPanel: View {
 
     @State private var query = ""
     @State private var filter = Filter.all
+    /// Показывать только эти цеха; пусто — все.
+    @State private var departments: Set<Department> = []
 
     private var filtered: [ReviewComment] {
         comments.filter { comment in
@@ -27,6 +30,7 @@ struct CommentsPanel: View {
             case .resolved: comment.isResolved
             }
         }
+        .filter { departments.isEmpty || $0.department.map(departments.contains) == true }
         .filter { query.isEmpty || $0.text.localizedCaseInsensitiveContains(query) }
     }
 
@@ -61,6 +65,10 @@ struct CommentsPanel: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
 
+            departmentFilter
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+
             if comments.isEmpty {
                 ContentUnavailableView("No comments yet",
                                        systemImage: "text.bubble",
@@ -68,7 +76,9 @@ struct CommentsPanel: View {
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxHeight: .infinity)
             } else if filtered.isEmpty {
-                ContentUnavailableView.search
+                ContentUnavailableView("No matching comments",
+                                       systemImage: "line.3.horizontal.decrease.circle",
+                                       description: Text("Change the status, department or search filter."))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxHeight: .infinity)
             } else {
@@ -83,6 +93,39 @@ struct CommentsPanel: View {
             }
         }
         .background(Theme.sidebar)
+    }
+
+    /// Плашки цехов: тап включает/выключает фильтр, рядом — сколько открытых замечаний у цеха.
+    private var departmentFilter: some View {
+        HStack(spacing: 6) {
+            ForEach(Department.allCases) { department in
+                let openCount = comments.filter { $0.department == department && !$0.isResolved }.count
+                Button {
+                    if departments.contains(department) {
+                        departments.remove(department)
+                    } else {
+                        departments.insert(department)
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        DepartmentChip(department: department, isSelected: departments.contains(department))
+                        if openCount > 0 {
+                            Text("\(openCount)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(department.title), \(openCount) open")
+                .accessibilityAddTraits(departments.contains(department) ? .isSelected : [])
+            }
+            Spacer(minLength: 0)
+            if !departments.isEmpty {
+                Button("Clear") { departments.removeAll() }
+                    .font(.caption)
+            }
+        }
     }
 
     private var commentsCountLabel: String {
@@ -102,6 +145,9 @@ struct CommentsPanel: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Theme.accent)
                         TimecodeChip(text: timecode(comment.frame), isProminent: comment.frame == currentFrame)
+                        if let department = comment.department {
+                            DepartmentChip(department: department)
+                        }
                     }
                     Text(comment.text)
                         .font(.subheadline)
@@ -136,6 +182,15 @@ struct CommentsPanel: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button("Edit", systemImage: "pencil") { onEdit(comment) }
+            Menu("Department", systemImage: "person.2") {
+                Picker("Department", selection: Binding(get: { comment.department },
+                                                        set: { onSetDepartment(comment, $0) })) {
+                    Text("No Department").tag(Department?.none)
+                    ForEach(Department.allCases) { department in
+                        Text("\(department.label) — \(department.title)").tag(Optional(department))
+                    }
+                }
+            }
             Button(comment.isResolved ? "Reopen" : "Mark as Resolved",
                    systemImage: comment.isResolved ? "arrow.uturn.backward.circle" : "checkmark.circle") {
                 onToggleResolved(comment)

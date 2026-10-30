@@ -22,7 +22,25 @@ final class ReviewVideo {
     }
 }
 
-/// Комментарий к кадру: номер кадра (не тайм-код — он может поменяться), текст и статус.
+/// Цех, которому адресован комментарий.
+enum Department: String, CaseIterable, Identifiable {
+    case edit, snd, cg, di, cc
+
+    var id: String { rawValue }
+    /// Короткая метка на плашке.
+    var label: String { rawValue.uppercased() }
+    var title: String {
+        switch self {
+        case .edit: "Edit"
+        case .snd: "Sound"
+        case .cg: "CG / VFX"
+        case .di: "DI"
+        case .cc: "Color Correction"
+        }
+    }
+}
+
+/// Комментарий к кадру: номер кадра (не тайм-код — он может поменяться), текст, цех и статус.
 @Model
 final class ReviewComment {
     var frame: Int
@@ -30,11 +48,19 @@ final class ReviewComment {
     var createdAt: Date
     var editedAt: Date?
     var isResolved: Bool
+    /// `Department.rawValue`; nil — цех не назначен.
+    var departmentRaw: String?
     var video: ReviewVideo?
 
-    init(frame: Int, text: String) {
+    var department: Department? {
+        get { departmentRaw.flatMap(Department.init(rawValue:)) }
+        set { departmentRaw = newValue?.rawValue }
+    }
+
+    init(frame: Int, text: String, department: Department? = nil) {
         self.frame = frame
         self.text = text
+        departmentRaw = department?.rawValue
         createdAt = .now
         isResolved = false
     }

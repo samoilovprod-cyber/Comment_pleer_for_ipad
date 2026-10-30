@@ -34,3 +34,33 @@ struct TimecodeChip: View {
             .background(isProminent ? Theme.accent : Theme.field, in: RoundedRectangle(cornerRadius: 4))
     }
 }
+
+extension Department {
+    var color: Color {
+        switch self {
+        case .edit: Color(hex: 0x5B9BF0)
+        case .snd: Color(hex: 0x4CC38A)
+        case .cg: Color(hex: 0xE58A3A)
+        case .di: Color(hex: 0xD45BB8)
+        case .cc: Color(hex: 0xE5C23A)
+        }
+    }
+}
+
+/// Плашка цеха: EDIT, SND, CG, DI, CC.
+struct DepartmentChip: View {
+    let department: Department?
+    var isSelected = true
+
+    var body: some View {
+        Text(department?.label ?? "DEPT")
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .foregroundStyle(department == nil ? Theme.textSecondary : (isSelected ? Color.black : department!.color))
+            .background {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(department.map { isSelected ? $0.color : $0.color.opacity(0.15) } ?? Theme.field)
+            }
+    }
+}
