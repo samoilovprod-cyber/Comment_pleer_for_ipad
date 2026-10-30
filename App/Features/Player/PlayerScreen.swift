@@ -31,6 +31,10 @@ struct PlayerScreen: View {
     @State private var isGoToTimecodeShown = false
     @State private var isMediaInfoShown = false
     @State private var isExportShown = false
+    /// Итог «Copy Comments From» — короткое сообщение.
+    @State private var copyNotice: String?
+    /// Последняя открытая версия — с неё приложение стартует после перезапуска (см. RootView).
+    @AppStorage("library.lastVideo") private var lastVideoData = Data()
     @State private var startTimecodeInput = ""
     @State private var startTimecodeError: String?
     @FocusState private var isCommentFocused: Bool
@@ -58,6 +62,10 @@ struct PlayerScreen: View {
         }
         .onChange(of: isMediaInfoShown) { _, shown in
             if !shown { focusPlayer() }
+        }
+        .alert(copyNotice ?? "", isPresented: Binding(get: { copyNotice != nil },
+                                                      set: { if !$0 { copyNotice = nil } })) {
+            Button("OK", role: .cancel) {}
         }
         .sheet(isPresented: $isExportShown) {
             ExportSheet(model: model)
@@ -92,6 +100,9 @@ struct PlayerScreen: View {
             await model.open(video: video)
         }
         .onDisappear { model.close() }
+        .onChange(of: model.video) { _, video in
+            if let video { lastVideoData = (try? JSONEncoder().encode(video.persistentModelID)) ?? Data() }
+        }
         .alert("Something went wrong", isPresented: .constant(model.errorMessage != nil && model.info != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
@@ -207,6 +218,20 @@ struct PlayerScreen: View {
                         }
                     }
                 }
+                let others = item.sortedVersions.reversed().filter { $0 !== current }
+                if !others.isEmpty {
+                    Menu("Copy Comments From", systemImage: "arrow.down.doc") {
+                        ForEach(others) { version in
+                            Button("\(version.versionLabel) — Open Comments") {
+                                copyComments(from: version, includeResolved: false)
+                            }
+                            Button("\(version.versionLabel) — All Comments") {
+                                copyComments(from: version, includeResolved: true)
+                            }
+                            Divider()
+                        }
+                    }
+                }
                 Divider()
                 Button("All Versions", systemImage: "square.stack") {
                     router.path.append(.versions(item.persistentModelID))
@@ -229,6 +254,15 @@ struct PlayerScreen: View {
         guard let versions = current.item?.sortedVersions, versions.count >= 2,
               let index = versions.firstIndex(where: { $0 === current }) else { return nil }
         return index > 0 ? versions[index - 1] : versions[index + 1]
+    }
+
+    private func copyComments(from version: ReviewVideo, includeResolved: Bool) {
+        let count = model.copyComments(from: version, includeResolved: includeResolved)
+        copyNotice = switch count {
+        case 0: "Nothing new to copy from \(version.versionLabel)."
+        case 1: "Copied 1 comment from \(version.versionLabel)."
+        default: "Copied \(count) comments from \(version.versionLabel)."
+        }
     }
 
     private func switchVersion(to version: ReviewVideo) async {

@@ -70,6 +70,11 @@ final class ReviewComment {
     /// Пометки на кадре (`Annotation` в JSON); nil — без рисунка.
     @Attribute(.externalStorage) var annotationData: Data?
     var video: ReviewVideo?
+    /// Общий id замечания во всех версиях: копия в новой версии получает id оригинала,
+    /// так одно и то же замечание не переносится дважды.
+    var originID: String?
+    /// Из какой версии перенесено (номер); nil — написано в этой версии.
+    var carriedFromVersion: Int?
 
     var annotation: Annotation? {
         get { annotationData.flatMap(Annotation.decode) }

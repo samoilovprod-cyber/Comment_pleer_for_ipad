@@ -195,12 +195,22 @@ final class PlayerModel: ObservableObject {
             }
             rows.append(ReviewReport.Row(id: index, number: index + 1, timecode: timecode(forFrame: comment.frame),
                                          department: comment.department, isResolved: comment.isResolved,
-                                         text: comment.text, hasDrawing: annotation != nil, image: image))
+                                         text: comment.text, hasDrawing: annotation != nil,
+                                         carriedFromVersion: comment.carriedFromVersion, image: image))
         }
         return ReviewReport(fileName: fileName, frameRate: info.rate.description,
                             startTimecode: info.startTimecode.description,
                             duration: Timecode(frameNumber: info.frameCount, rate: info.rate).description,
                             date: .now, author: author, rows: rows)
+    }
+
+    /// Копирует замечания другой версии ролика в открытую; возвращает, сколько добавилось.
+    func copyComments(from source: ReviewVideo, includeResolved: Bool) -> Int {
+        guard let video, let modelContext, source !== video else { return 0 }
+        let count = MediaLibrary.carryComments(from: source, to: video, includeResolved: includeResolved,
+                                               context: modelContext)
+        saveAndRefresh()
+        return count
     }
 
     func setDepartment(_ department: Department?, for comment: ReviewComment) {

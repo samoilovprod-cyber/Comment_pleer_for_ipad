@@ -19,7 +19,7 @@ enum PDFReportWriter {
             Column(title: "#", width: 30),
             Column(title: "Timecode", width: 92),
             Column(title: "Dept", width: 48),
-            Column(title: "Status", width: 62),
+            Column(title: "Status", width: 92),
         ]
         let commentWidth = contentWidth - fixed.reduce(0) { $0 + $1.width } - shotWidth
         var columns = fixed + [Column(title: "Comment", width: commentWidth)]

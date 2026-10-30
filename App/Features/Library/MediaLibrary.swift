@@ -60,12 +60,45 @@ enum MediaLibrary {
                 context.insert(created)
                 return created
             }()
+            let previous = target.latest
             video.versionNumber = target.nextVersionNumber
             video.item = target
             target.updatedAt = .now
+            // Открытые замечания переезжают в новую версию — там их и проверяют.
+            if let previous {
+                carryComments(from: previous, to: video, includeResolved: false, context: context)
+            }
         }
         try context.save()
         return video
+    }
+
+    /// Копирует замечания одной версии в другую на те же кадры (вместе с цехом и рисунком).
+    /// Уже перенесённые раньше не дублируются. Возвращает число скопированных.
+    @discardableResult
+    static func carryComments(from source: ReviewVideo, to target: ReviewVideo, includeResolved: Bool,
+                              context: ModelContext) -> Int {
+        let alreadyThere = Set(target.comments.compactMap(\.originID))
+        let lastFrame = max(target.frameCount - 1, 0)
+        var count = 0
+        for comment in source.comments.sorted(by: { $0.createdAt < $1.createdAt })
+        where includeResolved || !comment.isResolved {
+            let origin = comment.originID ?? UUID().uuidString
+            comment.originID = origin
+            guard !alreadyThere.contains(origin) else { continue }
+            let copy = ReviewComment(frame: target.frameCount > 0 ? min(comment.frame, lastFrame) : comment.frame,
+                                     text: comment.text, department: comment.department)
+            copy.createdAt = comment.createdAt
+            copy.annotationData = comment.annotationData
+            copy.originID = origin
+            // Если замечание уже переносили, помним, где его написали впервые.
+            copy.carriedFromVersion = comment.carriedFromVersion ?? source.versionNumber
+            context.insert(copy)
+            copy.video = target
+            count += 1
+        }
+        try? context.save()
+        return count
     }
 
     /// Подменяет файл версии (переместили, переименовали) — комментарии остаются.
