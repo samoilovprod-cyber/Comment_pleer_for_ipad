@@ -27,16 +27,16 @@ struct MediaInfoSheet: View {
                     ProgressView()
                 }
             }
-            .navigationTitle("Информация о файле")
+            .navigationTitle("File Info")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Готово") { dismiss() }
+                    Button("Done") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     if let sections {
                         ShareLink(item: MediaInfoReader.plainText(sections)) {
-                            Label("Поделиться", systemImage: "square.and.arrow.up")
+                            Label("Share", systemImage: "square.and.arrow.up")
                         }
                     }
                 }

@@ -44,7 +44,7 @@ struct PlayerScreen: View {
         .tint(Theme.accent)
         .overlay {
             if isCopyingVideo {
-                ProgressView("Копирование видео…")
+                ProgressView("Copying video…")
                     .padding(24)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if isDropTargeted {
@@ -82,7 +82,7 @@ struct PlayerScreen: View {
             if !shown { isPlayerFocused = true }
         }
         .task { await model.restoreLastVideo() }
-        .alert("Не удалось открыть видео", isPresented: .constant(model.errorMessage != nil)) {
+        .alert("Couldn't open the video", isPresented: .constant(model.errorMessage != nil)) {
             Button("OK") { model.errorMessage = nil }
         } message: {
             Text(model.errorMessage ?? "")
@@ -107,13 +107,13 @@ struct PlayerScreen: View {
                 Menu {
                     openSourceButtons
                 } label: {
-                    Label("Открыть", systemImage: "film")
+                    Label("Open", systemImage: "film")
                         .font(.subheadline.weight(.medium))
                 }
                 .disabled(isCopyingVideo)
                 Spacer()
                 if model.asset != nil {
-                    Button("Информация о файле", systemImage: "info.circle") { isMediaInfoShown = true }
+                    Button("File info", systemImage: "info.circle") { isMediaInfoShown = true }
                         .labelStyle(.iconOnly)
                         .font(.title3)
                 }
@@ -131,12 +131,12 @@ struct PlayerScreen: View {
             Text(Self.sourceLabel(info.source))
                 .foregroundStyle(info.source == .assumedZero ? Color.orange : Theme.textSecondary)
             Text("·")
-            Text("Кадр \(model.currentFrame + 1) / \(info.frameCount)")
+            Text("Frame \(model.currentFrame + 1) / \(info.frameCount)")
             if info.isLikelyVariableFrameRate {
                 Text("·")
-                Label("Переменная частота кадров", systemImage: "exclamationmark.triangle.fill")
+                Label("Variable frame rate", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
-                    .help("Тайм-код и шаг по кадрам могут быть неточными.")
+                    .help("Timecode and frame stepping may be inaccurate.")
             }
         }
         .font(.caption.monospacedDigit())
@@ -146,17 +146,17 @@ struct PlayerScreen: View {
 
     private static func sourceLabel(_ source: VideoTimecodeInfo.Source) -> String {
         switch source {
-        case .embedded: "TC из файла"
-        case .assumedZero: "TC не найден — с 00:00:00:00"
-        case .manual: "TC задан вручную"
+        case .embedded: "TC from file"
+        case .assumedZero: "No TC — starting at 00:00:00:00"
+        case .manual: "TC set manually"
         }
     }
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("Нет видео", systemImage: "film.stack")
+            Label("No Video", systemImage: "film.stack")
         } description: {
-            Text("Откройте MOV или MP4 (ProRes, H.264, HEVC) или перетащите файл сюда.")
+            Text("Open a MOV or MP4 (ProRes, H.264, HEVC) or drop a file here.")
         } actions: {
             HStack {
                 openSourceButtons
@@ -169,8 +169,8 @@ struct PlayerScreen: View {
 
     @ViewBuilder
     private var openSourceButtons: some View {
-        Button("Из «Файлов»", systemImage: "folder") { isImporting = true }
-        Button("Из «Фото»", systemImage: "photo.on.rectangle") { isPickingFromPhotos = true }
+        Button("From Files", systemImage: "folder") { isImporting = true }
+        Button("From Photos", systemImage: "photo.on.rectangle") { isPickingFromPhotos = true }
     }
 
     private func openFromPhotos(_ item: PhotosPickerItem) async {
@@ -178,7 +178,7 @@ struct PlayerScreen: View {
         defer { isCopyingVideo = false }
         do {
             guard let movie = try await item.loadTransferable(type: PickedMovie.self) else {
-                model.errorMessage = "Выбранный объект не является видео."
+                model.errorMessage = "The selected item is not a video."
                 return
             }
             await model.open(url: movie.url, isImportedCopy: true)
@@ -288,7 +288,7 @@ struct PlayerScreen: View {
     /// Поле комментария: тайм-код текущего кадра, видео ставится на паузу, как только начинаете писать.
     private var commentComposer: some View {
         HStack(spacing: 10) {
-            TextField("Оставьте комментарий…", text: $commentText, axis: .vertical)
+            TextField("Leave a comment…", text: $commentText, axis: .vertical)
                 .lineLimit(1...4)
                 .focused($isCommentFocused)
                 .foregroundStyle(Theme.textPrimary)
@@ -306,7 +306,7 @@ struct PlayerScreen: View {
 
             TimecodeChip(text: model.currentTimecode?.description ?? "--:--:--:--", isProminent: true)
 
-            Button("Отправить", action: submitComment)
+            Button("Submit", action: submitComment)
                 .buttonStyle(.borderedProminent)
                 .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
@@ -333,17 +333,17 @@ struct PlayerScreen: View {
 
     private var transportControls: some View {
         HStack(spacing: 14) {
-            Button("−1 секунда", systemImage: "gobackward") { model.step(seconds: -1) }
-            Button("−10 кадров", systemImage: "backward.end.alt") { model.step(by: -10) }
-            Button("−1 кадр", systemImage: "backward.frame") { model.step(by: -1) }
-            Button(model.isPlaying ? "Пауза" : "Играть",
+            Button("Back 1 second", systemImage: "gobackward") { model.step(seconds: -1) }
+            Button("Back 10 frames", systemImage: "backward.end.alt") { model.step(by: -10) }
+            Button("Back 1 frame", systemImage: "backward.frame") { model.step(by: -1) }
+            Button(model.isPlaying ? "Pause" : "Play",
                    systemImage: model.isPlaying ? "pause.fill" : "play.fill") { model.togglePlayPause() }
                 .font(.title)
                 .frame(width: 36)
                 .buttonRepeatBehavior(.disabled)
-            Button("+1 кадр", systemImage: "forward.frame") { model.step(by: 1) }
-            Button("+10 кадров", systemImage: "forward.end.alt") { model.step(by: 10) }
-            Button("+1 секунда", systemImage: "goforward") { model.step(seconds: 1) }
+            Button("Forward 1 frame", systemImage: "forward.frame") { model.step(by: 1) }
+            Button("Forward 10 frames", systemImage: "forward.end.alt") { model.step(by: 10) }
+            Button("Forward 1 second", systemImage: "goforward") { model.step(seconds: 1) }
         }
         .labelStyle(.iconOnly)
         .font(.title3)
@@ -355,7 +355,7 @@ struct PlayerScreen: View {
 
     private var speedMenu: some View {
         Menu {
-            Picker("Скорость", selection: Binding(get: { model.speed }, set: { model.setSpeed($0) })) {
+            Picker("Speed", selection: Binding(get: { model.speed }, set: { model.setSpeed($0) })) {
                 ForEach(PlayerModel.speeds, id: \.self) { speed in
                     Text(Self.speedLabel(speed)).tag(speed)
                 }
@@ -419,7 +419,7 @@ struct PlayerScreen: View {
 
     private var timecodeEntry: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Перейти к тайм-коду").font(.headline)
+            Text("Go to Timecode").font(.headline)
             HStack {
                 TextField("01:00:10:05", text: $timecodeInput)
                     .textFieldStyle(.roundedBorder)
@@ -427,7 +427,7 @@ struct PlayerScreen: View {
                     .font(.body.monospaced())
                     .frame(width: 200)
                     .onSubmit(goToTimecode)
-                Button("Перейти", action: goToTimecode)
+                Button("Go", action: goToTimecode)
                     .buttonStyle(.borderedProminent)
             }
             if let timecodeInputError {
@@ -438,8 +438,8 @@ struct PlayerScreen: View {
 
             Divider().padding(.vertical, 6)
 
-            Text("Тайм-код первого кадра").font(.headline)
-            Text("Если в файле нет тайм-кода или он неверный — задайте начало вручную. Запоминается для этого файла.")
+            Text("Start Timecode").font(.headline)
+            Text("If the file has no timecode or it's wrong, set the first frame's timecode here. Remembered for this file.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -450,7 +450,7 @@ struct PlayerScreen: View {
                     .font(.body.monospaced())
                     .frame(width: 200)
                     .onSubmit(applyStartTimecode)
-                Button("Задать", action: applyStartTimecode)
+                Button("Set", action: applyStartTimecode)
                     .buttonStyle(.bordered)
             }
             if let startTimecodeError {
@@ -459,7 +459,7 @@ struct PlayerScreen: View {
                     .font(.footnote)
             }
             if model.info?.source == .manual {
-                Button("Вернуть тайм-код из файла", systemImage: "arrow.uturn.backward") {
+                Button("Reset to File Timecode", systemImage: "arrow.uturn.backward") {
                     model.resetStartTimecode()
                 }
                 .font(.footnote)
@@ -476,9 +476,9 @@ struct PlayerScreen: View {
             startTimecodeInput = ""
             startTimecodeError = nil
         } catch TimecodeError.droppedFrameNumber {
-            startTimecodeError = "Такого номера кадра нет в drop-frame"
+            startTimecodeError = "This frame number doesn't exist in drop-frame"
         } catch {
-            startTimecodeError = "Неверный тайм-код"
+            startTimecodeError = "Invalid timecode"
         }
     }
 
@@ -486,12 +486,12 @@ struct PlayerScreen: View {
         guard let rate = model.info?.rate else { return }
         do {
             let timecode = try Timecode(timecodeInput, rate: rate)
-            timecodeInputError = model.seek(to: timecode) ? nil : "Тайм-код вне видео"
+            timecodeInputError = model.seek(to: timecode) ? nil : "Timecode is outside the video"
             if timecodeInputError == nil { isGoToTimecodeShown = false }
         } catch TimecodeError.droppedFrameNumber {
-            timecodeInputError = "Такого номера кадра нет в drop-frame"
+            timecodeInputError = "This frame number doesn't exist in drop-frame"
         } catch {
-            timecodeInputError = "Неверный тайм-код"
+            timecodeInputError = "Invalid timecode"
         }
     }
 }

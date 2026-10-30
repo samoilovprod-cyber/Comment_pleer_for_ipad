@@ -1,5 +1,4 @@
 import AVFoundation
-import UniformTypeIdentifiers
 
 /// Сведения о файле в духе MediaInfo: общие, по каждой дорожке и метаданные.
 struct MediaInfoSection: Identifiable {
@@ -21,17 +20,17 @@ enum MediaInfoReader {
         let fileSize = (try? asset.url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
 
         var general: [MediaInfoSection.Row] = []
-        general.add("Файл", asset.url.lastPathComponent)
-        general.add("Формат", UTType(filenameExtension: asset.url.pathExtension)?.localizedDescription)
-        general.add("Размер", fileSize.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) })
-        general.add("Длительность", formatDuration(duration))
+        general.add("File", asset.url.lastPathComponent)
+        general.add("Format", containerName(asset.url.pathExtension))
+        general.add("File size", fileSize.map(formatFileSize))
+        general.add("Duration", formatDuration(duration))
         if let fileSize, duration.seconds > 0 {
-            general.add("Общий битрейт", formatBitrate(Double(fileSize) * 8 / duration.seconds))
+            general.add("Overall bit rate", formatBitrate(Double(fileSize) * 8 / duration.seconds))
         }
         if let created = try? await asset.load(.creationDate), let date = try? await created.load(.dateValue) {
-            general.add("Дата съёмки", date.formatted(date: .abbreviated, time: .standard))
+            general.add("Recorded date", date.formatted(Date.FormatStyle(date: .abbreviated, time: .standard).locale(Locale(identifier: "en_US"))))
         }
-        sections.append(MediaInfoSection(title: "Общее", rows: general))
+        sections.append(MediaInfoSection(title: "General", rows: general))
 
         let tracks = (try? await asset.load(.tracks)) ?? []
         var counters: [AVMediaType: Int] = [:]
@@ -40,20 +39,20 @@ enum MediaInfoReader {
             let number = counters[track.mediaType]!
             switch track.mediaType {
             case .video:
-                sections.append(MediaInfoSection(title: "Видео \(number)", rows: await videoRows(track)))
+                sections.append(MediaInfoSection(title: "Video \(number)", rows: await videoRows(track)))
             case .audio:
-                sections.append(MediaInfoSection(title: "Аудио \(number)", rows: await audioRows(track)))
+                sections.append(MediaInfoSection(title: "Audio \(number)", rows: await audioRows(track)))
             case .timecode:
-                sections.append(MediaInfoSection(title: "Тайм-код \(number)", rows: await timecodeRows(track)))
+                sections.append(MediaInfoSection(title: "Timecode \(number)", rows: await timecodeRows(track)))
             default:
                 let rows = await commonTrackRows(track)
-                sections.append(MediaInfoSection(title: "Дорожка \(track.mediaType.rawValue) \(number)", rows: rows))
+                sections.append(MediaInfoSection(title: "Track \(track.mediaType.rawValue) \(number)", rows: rows))
             }
         }
 
         let metadata = await metadataRows(asset)
         if !metadata.isEmpty {
-            sections.append(MediaInfoSection(title: "Метаданные", rows: metadata))
+            sections.append(MediaInfoSection(title: "Metadata", rows: metadata))
         }
         return sections
     }
@@ -73,38 +72,38 @@ enum MediaInfoReader {
         var rows = await commonTrackRows(track)
         guard let (size, transform, fps, minFrameDuration) = try? await track.load(
             .naturalSize, .preferredTransform, .nominalFrameRate, .minFrameDuration) else { return rows }
-        rows.add("Размер кадра", "\(Int(size.width)) × \(Int(size.height))")
+        rows.add("Frame size", "\(Int(size.width)) × \(Int(size.height))")
         let angle = Int((atan2(transform.b, transform.a) * 180 / .pi).rounded())
         if angle != 0 {
-            rows.add("Поворот", "\(angle)°")
+            rows.add("Rotation", "\(angle)°")
         }
-        rows.add("Частота кадров", String(format: "%.3f fps", fps))
+        rows.add("Frame rate", String(format: "%.3f fps", fps))
         if minFrameDuration.isNumeric, fps > 0, abs(minFrameDuration.seconds * Double(fps) - 1) > 0.05 {
-            rows.add("Режим частоты", "Переменная (VFR)")
+            rows.add("Frame rate mode", "Variable (VFR)")
         } else {
-            rows.add("Режим частоты", "Постоянная (CFR)")
+            rows.add("Frame rate mode", "Constant (CFR)")
         }
 
         if let description = try? await track.load(.formatDescriptions).first {
             let extensions = CMFormatDescriptionGetExtensions(description) as? [String: Any] ?? [:]
             if let depth = extensions[kCMFormatDescriptionExtension_Depth as String] as? Int {
-                rows.add("Глубина (поле Depth)", "\(depth)")
+                rows.add("Depth", "\(depth)")
             }
             if let bits = extensions[kCMFormatDescriptionExtension_BitsPerComponent as String] as? Int {
-                rows.add("Бит на канал", "\(bits)")
+                rows.add("Bit depth", "\(bits)")
             }
             if let aspect = extensions[kCMFormatDescriptionExtension_PixelAspectRatio as String] as? [String: Int],
                let h = aspect["HorizontalSpacing"], let v = aspect["VerticalSpacing"], h != v {
-                rows.add("Соотношение пикселя", "\(h):\(v)")
+                rows.add("Pixel aspect ratio", "\(h):\(v)")
             }
             if let fields = extensions[kCMFormatDescriptionExtension_FieldCount as String] as? Int {
-                rows.add("Развёртка", fields == 2 ? "Чересстрочная" : "Прогрессивная")
+                rows.add("Scan type", fields == 2 ? "Interlaced" : "Progressive")
             }
-            rows.add("Цветовые первичные", extensions[kCMFormatDescriptionExtension_ColorPrimaries as String] as? String)
-            rows.add("Передаточная функция", extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String)
-            rows.add("Матрица YCbCr", extensions[kCMFormatDescriptionExtension_YCbCrMatrix as String] as? String)
+            rows.add("Color primaries", extensions[kCMFormatDescriptionExtension_ColorPrimaries as String] as? String)
+            rows.add("Transfer characteristics", extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String)
+            rows.add("Matrix coefficients", extensions[kCMFormatDescriptionExtension_YCbCrMatrix as String] as? String)
             if let fullRange = extensions[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool {
-                rows.add("Диапазон", fullRange ? "Полный" : "Ограниченный (video)")
+                rows.add("Color range", fullRange ? "Full" : "Limited")
             }
         }
         return rows
@@ -114,10 +113,10 @@ enum MediaInfoReader {
         var rows = await commonTrackRows(track)
         guard let description = try? await track.load(.formatDescriptions).first,
               let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee else { return rows }
-        rows.add("Каналы", "\(asbd.mChannelsPerFrame)")
-        rows.add("Частота дискретизации", String(format: "%.1f кГц", asbd.mSampleRate / 1000))
+        rows.add("Channels", "\(asbd.mChannelsPerFrame)")
+        rows.add("Sampling rate", String(format: "%.1f kHz", asbd.mSampleRate / 1000))
         if asbd.mBitsPerChannel > 0 {
-            rows.add("Разрядность", "\(asbd.mBitsPerChannel) бит")
+            rows.add("Bit depth", "\(asbd.mBitsPerChannel) bits")
         }
         return rows
     }
@@ -127,15 +126,15 @@ enum MediaInfoReader {
         guard let description = try? await track.load(.formatDescriptions).first else { return rows }
         let frameDuration = CMTimeCodeFormatDescriptionGetFrameDuration(description)
         if frameDuration.seconds > 0 {
-            rows.add("Частота", String(format: "%.3f fps", 1 / frameDuration.seconds))
+            rows.add("Frame rate", String(format: "%.3f fps", 1 / frameDuration.seconds))
         }
         let flags = CMTimeCodeFormatDescriptionGetTimeCodeFlags(description)
-        rows.add("Drop-frame", flags & UInt32(kCMTimeCodeFlag_DropFrame) != 0 ? "Да" : "Нет")
-        rows.add("Формат", fourCC(CMFormatDescriptionGetMediaSubType(description)))
+        rows.add("Drop-frame", flags & UInt32(kCMTimeCodeFlag_DropFrame) != 0 ? "Yes" : "No")
+        rows.add("Format", fourCC(CMFormatDescriptionGetMediaSubType(description)))
         let extensions = CMFormatDescriptionGetExtensions(description) as? [String: Any] ?? [:]
         if let source = extensions[kCMTimeCodeFormatDescriptionExtension_SourceReferenceName as String] as? [String: Any],
            let reel = source[kCMTimeCodeFormatDescriptionKey_Value as String] as? String {
-            rows.add("Имя катушки (reel)", reel)
+            rows.add("Reel name", reel)
         }
         return rows
     }
@@ -147,16 +146,16 @@ enum MediaInfoReader {
             let subtype = CMFormatDescriptionGetMediaSubType(description)
             let extensions = CMFormatDescriptionGetExtensions(description) as? [String: Any] ?? [:]
             let formatName = extensions[kCMFormatDescriptionExtension_FormatName as String] as? String
-            rows.add("Кодек", codecName(subtype) ?? formatName ?? fourCC(subtype))
+            rows.add("Codec", codecName(subtype) ?? formatName ?? fourCC(subtype))
             rows.add("FourCC", fourCC(subtype))
         }
         if let (rate, range, language) = try? await track.load(.estimatedDataRate, .timeRange, .languageCode) {
             if rate > 0 {
-                rows.add("Битрейт", formatBitrate(Double(rate)))
+                rows.add("Bit rate", formatBitrate(Double(rate)))
             }
-            rows.add("Длительность", formatDuration(range.duration))
+            rows.add("Duration", formatDuration(range.duration))
             if let language, language != "und" {
-                rows.add("Язык", Locale.current.localizedString(forLanguageCode: language) ?? language)
+                rows.add("Language", Locale(identifier: "en_US").localizedString(forLanguageCode: language) ?? language)
             }
         }
         return rows
@@ -194,22 +193,22 @@ enum MediaInfoReader {
         case "alac": "Apple Lossless"
         case "ac-3": "Dolby Digital (AC-3)"
         case "ec-3": "Dolby Digital Plus (E-AC-3)"
-        case "tmcd": "Тайм-код QuickTime"
+        case "tmcd": "QuickTime timecode"
         default: nil
         }
     }
 
     private static func commonKeyName(_ key: AVMetadataKey) -> String {
         switch key {
-        case .commonKeyMake: "Производитель"
-        case .commonKeyModel: "Модель"
-        case .commonKeySoftware: "Программа"
-        case .commonKeyCreationDate: "Дата создания"
-        case .commonKeyLocation: "Место"
-        case .commonKeyTitle: "Название"
-        case .commonKeyAuthor, .commonKeyCreator: "Автор"
-        case .commonKeyCopyrights: "Авторские права"
-        case .commonKeyDescription: "Описание"
+        case .commonKeyMake: "Make"
+        case .commonKeyModel: "Model"
+        case .commonKeySoftware: "Software"
+        case .commonKeyCreationDate: "Creation date"
+        case .commonKeyLocation: "Location"
+        case .commonKeyTitle: "Title"
+        case .commonKeyAuthor, .commonKeyCreator: "Author"
+        case .commonKeyCopyrights: "Copyright"
+        case .commonKeyDescription: "Description"
         default: key.rawValue
         }
     }
@@ -226,10 +225,26 @@ enum MediaInfoReader {
         return String(format: "%02d:%02d:%06.3f", hours, minutes, seconds)
     }
 
+    private static func containerName(_ pathExtension: String) -> String {
+        switch pathExtension.lowercased() {
+        case "mov", "qt": "QuickTime (MOV)"
+        case "mp4": "MPEG-4 (MP4)"
+        case "m4v": "MPEG-4 (M4V)"
+        default: pathExtension.uppercased()
+        }
+    }
+
+    private static func formatFileSize(_ bytes: Int) -> String {
+        let value = Double(bytes)
+        return value >= 1_000_000_000 ? String(format: "%.2f GB", value / 1_000_000_000)
+            : value >= 1_000_000 ? String(format: "%.1f MB", value / 1_000_000)
+            : String(format: "%.0f KB", value / 1000)
+    }
+
     private static func formatBitrate(_ bitsPerSecond: Double) -> String {
         bitsPerSecond >= 1_000_000
-            ? String(format: "%.1f Мбит/с", bitsPerSecond / 1_000_000)
-            : String(format: "%.0f кбит/с", bitsPerSecond / 1000)
+            ? String(format: "%.1f Mb/s", bitsPerSecond / 1_000_000)
+            : String(format: "%.0f kb/s", bitsPerSecond / 1000)
     }
 }
 

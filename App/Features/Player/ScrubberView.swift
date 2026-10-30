@@ -53,8 +53,8 @@ struct ScrubberView: View {
         }
         .frame(height: 36)
         .accessibilityElement()
-        .accessibilityLabel("Таймлайн")
-        .accessibilityValue("Кадр \(frame + 1) из \(frameCount)")
+        .accessibilityLabel("Timeline")
+        .accessibilityValue("Frame \(frame + 1) of \(frameCount)")
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: onScrub(frame + 1)

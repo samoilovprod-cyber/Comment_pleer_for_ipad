@@ -50,7 +50,7 @@ enum VideoTimecodeReaderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noVideoTrack: "В файле нет видеодорожки."
+        case .noVideoTrack: "The file has no video track."
         }
     }
 }

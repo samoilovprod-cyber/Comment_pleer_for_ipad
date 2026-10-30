@@ -27,7 +27,7 @@ struct CommentsPanel: View {
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                TextField("Поиск по комментариям", text: $query)
+                TextField("Search comments", text: $query)
                     .foregroundStyle(Theme.textPrimary)
             }
             .font(.subheadline)
@@ -39,9 +39,9 @@ struct CommentsPanel: View {
             .padding(.bottom, 8)
 
             if comments.isEmpty {
-                ContentUnavailableView("Комментариев пока нет",
+                ContentUnavailableView("No comments yet",
                                        systemImage: "text.bubble",
-                                       description: Text("Поставьте видео на нужный кадр и напишите комментарий внизу."))
+                                       description: Text("Pause on a frame and type a comment below."))
                     .foregroundStyle(Theme.textSecondary)
                     .frame(maxHeight: .infinity)
             } else {
@@ -59,7 +59,7 @@ struct CommentsPanel: View {
     }
 
     private var commentsCountLabel: String {
-        comments.isEmpty ? "Комментарии" : "Комментарии: \(comments.count)"
+        comments.isEmpty ? "Comments" : "\(comments.count) Comments"
     }
 
     private func row(_ comment: ReviewComment) -> some View {
@@ -70,7 +70,7 @@ struct CommentsPanel: View {
                     .foregroundStyle(Theme.textSecondary)
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
-                        Text("Вы")
+                        Text("You")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Theme.accent)
                         TimecodeChip(text: timecode(comment.frame), isProminent: comment.frame == currentFrame)
@@ -92,7 +92,7 @@ struct CommentsPanel: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button("Удалить", systemImage: "trash", role: .destructive) { onDelete(comment) }
+            Button("Delete", systemImage: "trash", role: .destructive) { onDelete(comment) }
         }
     }
 }
