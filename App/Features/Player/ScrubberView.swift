@@ -4,12 +4,16 @@ import SwiftUI
 struct ScrubberView: View {
     let frame: Int
     let frameCount: Int
+    /// Кадры с комментариями — отметки над дорожкой.
+    var markers: [Int] = []
+    /// Кадры, где все замечания исправлены, — отметки зелёным.
+    var resolvedMarkers: [Int] = []
     let onScrub: (Int) -> Void
 
     @State private var isDragging = false
 
     private let trackHeight: CGFloat = 6
-    private let thumbSize: CGFloat = 22
+    private let thumbSize: CGFloat = 18
 
     var body: some View {
         GeometryReader { geometry in
@@ -18,11 +22,18 @@ struct ScrubberView: View {
 
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(.quaternary)
+                    .fill(Color.white.opacity(0.15))
                     .frame(height: trackHeight)
                 Capsule()
-                    .fill(.tint)
+                    .fill(Theme.accent)
                     .frame(width: thumbX + thumbSize / 2, height: trackHeight)
+                ForEach(markerFrames, id: \.frame) { marker in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(marker.isOpen ? Color.yellow : Color.green)
+                        .frame(width: 3, height: 14)
+                        .offset(x: CGFloat(fraction(ofFrame: marker.frame)) * width + thumbSize / 2 - 1.5)
+                        .allowsHitTesting(false)
+                }
                 Circle()
                     .fill(.white)
                     .shadow(radius: isDragging ? 4 : 2)
@@ -42,10 +53,10 @@ struct ScrubberView: View {
             )
             .animation(.easeOut(duration: 0.15), value: isDragging)
         }
-        .frame(height: 44)
+        .frame(height: 36)
         .accessibilityElement()
-        .accessibilityLabel("Таймлайн")
-        .accessibilityValue("Кадр \(frame + 1) из \(frameCount)")
+        .accessibilityLabel("Timeline")
+        .accessibilityValue("Frame \(frame + 1) of \(frameCount)")
         .accessibilityAdjustableAction { direction in
             switch direction {
             case .increment: onScrub(frame + 1)
@@ -55,7 +66,15 @@ struct ScrubberView: View {
         }
     }
 
-    private var progress: Double {
+    private var progress: Double { fraction(ofFrame: frame) }
+
+    /// Одна отметка на кадр; если там есть хоть одно открытое замечание — она жёлтая.
+    private var markerFrames: [(frame: Int, isOpen: Bool)] {
+        let open = Set(markers)
+        return Set(markers).union(resolvedMarkers).sorted().map { ($0, open.contains($0)) }
+    }
+
+    private func fraction(ofFrame frame: Int) -> Double {
         frameCount > 1 ? Double(frame) / Double(frameCount - 1) : 0
     }
 
