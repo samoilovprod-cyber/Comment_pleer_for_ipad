@@ -130,10 +130,13 @@ final class PlayerModel: ObservableObject {
         StartTimecodeStore.save(nil, fileName: fileName, frameCount: info.frameCount)
     }
 
-    func addComment(_ text: String, department: Department?) {
+    /// `frame` — кадр рисунка (по умолчанию текущий); комментарий без текста допустим, если есть рисунок.
+    func addComment(_ text: String, department: Department?, annotation: Annotation? = nil, frame: Int? = nil) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard info != nil, !text.isEmpty else { return }
-        let comment = ReviewComment(frame: currentFrame, text: text, department: department)
+        let annotation = annotation?.isEmpty == false ? annotation : nil
+        guard info != nil, !text.isEmpty || annotation != nil else { return }
+        let comment = ReviewComment(frame: frame ?? currentFrame, text: text, department: department)
+        comment.annotation = annotation
         if let video, let modelContext {
             modelContext.insert(comment)
             comment.video = video
@@ -147,6 +150,30 @@ final class PlayerModel: ObservableObject {
         comment.text = text
         comment.editedAt = .now
         saveAndRefresh()
+    }
+
+    func setAnnotation(_ annotation: Annotation?, for comment: ReviewComment) {
+        comment.annotation = annotation
+        saveAndRefresh()
+    }
+
+    /// Кадр комментария в полном разрешении с пометками — PNG во временной папке, для «Поделиться».
+    func exportFrameImage(for comment: ReviewComment) async throws -> URL {
+        guard let asset, let info else { throw CocoaError(.fileNoSuchFile) }
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let frameImage = try await generator.image(at: info.time(forFrame: comment.frame)).image
+        let image = AnnotationRenderer.composite(frame: frameImage, annotation: comment.annotation ?? Annotation(),
+                                                 frameSize: info.naturalSize)
+        guard let data = image.pngData() else { throw CocoaError(.fileWriteUnknown) }
+        let baseName = (fileName as NSString?)?.deletingPathExtension ?? "frame"
+        let timecode = timecode(forFrame: comment.frame).replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: ";", with: "-")
+        let url = URL.temporaryDirectory.appendingPathComponent("\(baseName)_\(timecode).png")
+        try data.write(to: url, options: .atomic)
+        return url
     }
 
     func setDepartment(_ department: Department?, for comment: ReviewComment) {

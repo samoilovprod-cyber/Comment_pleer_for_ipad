@@ -19,6 +19,7 @@ struct VideoTimecodeInfo {
     let videoStart: CMTime
     let duration: CMTime
     let frameCount: Int
+    /// Размер кадра на экране в пикселях — с учётом поворота (вертикальное видео с iPhone).
     let naturalSize: CGSize
     /// Похоже на переменную частоту кадров (часто у записей с телефона) — покадровый шаг может быть неточным.
     let isLikelyVariableFrameRate: Bool
@@ -60,8 +61,10 @@ enum VideoTimecodeReader {
         guard let video = try await asset.loadTracks(withMediaType: .video).first else {
             throw VideoTimecodeReaderError.noVideoTrack
         }
-        let (nominalFrameRate, minFrameDuration, timeRange, naturalSize) =
-            try await video.load(.nominalFrameRate, .minFrameDuration, .timeRange, .naturalSize)
+        let (nominalFrameRate, minFrameDuration, timeRange, encodedSize, transform) =
+            try await video.load(.nominalFrameRate, .minFrameDuration, .timeRange, .naturalSize, .preferredTransform)
+        let rotated = encodedSize.applying(transform)
+        let naturalSize = CGSize(width: abs(rotated.width), height: abs(rotated.height))
 
         let videoRate = FrameRate.detect(fps: Double(nominalFrameRate))
         var rate = videoRate

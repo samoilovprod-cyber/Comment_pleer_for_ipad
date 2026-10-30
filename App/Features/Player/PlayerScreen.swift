@@ -8,6 +8,10 @@ struct PlayerScreen: View {
     private static let jogPointsPerFrame: CGFloat = 8
 
     @StateObject private var model = PlayerModel()
+    @StateObject private var annotator = AnnotationEditor()
+    /// PNG кадра с пометками, готовый к отправке.
+    @State private var sharedImage: SharedFile?
+    @State private var isExportingImage = false
     @State private var isImporting = false
     @State private var isPickingFromPhotos = false
     @State private var photosSelection: PhotosPickerItem?
@@ -97,6 +101,16 @@ struct PlayerScreen: View {
         }
         .onChange(of: editingComment == nil) { _, closed in
             if closed { isPlayerFocused = true }
+        }
+        .sheet(item: $sharedImage) { file in
+            ShareSheet(items: [file.url])
+        }
+        .overlay {
+            if isExportingImage {
+                ProgressView("Rendering frame…")
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
         }
         .task {
             model.attach(modelContext)
@@ -221,6 +235,8 @@ struct PlayerScreen: View {
                                          editText = comment.text
                                          editingComment = comment
                                      },
+                                     onEditDrawing: editDrawing,
+                                     onShareImage: shareImage,
                                      onDelete: model.deleteComment)
         if horizontalSizeClass == .compact {
             VStack(spacing: 0) {
@@ -238,8 +254,10 @@ struct PlayerScreen: View {
 
     /// Всё, что ловит клавиши плеера, когда фокус не в текстовом поле.
     private func keyHandling<Content: View>(_ content: Content) -> some View {
+        // В режиме рисования плеер не держит фокус: с подключённой клавиатурой фокусируемый
+        // контейнер перехватывает касания и Apple Pencil не рисует. ⌘Z/Esc там — шорткаты тулбара.
         content
-            .focusable()
+            .focusable(!annotator.isActive)
             .focusEffectDisabled()
             .focused($isPlayerFocused)
             .onKeyPress(phases: [.down, .repeat, .up], action: handleKey)
@@ -250,17 +268,22 @@ struct PlayerScreen: View {
             .onChange(of: isGoToTimecodeShown) { _, shown in
                 if !shown { isPlayerFocused = true }
             }
+            .onChange(of: annotator.isActive) { _, active in
+                if !active { isPlayerFocused = true }
+            }
     }
 
     private func playerColumn(info: VideoTimecodeInfo) -> some View {
         VStack(spacing: 0) {
             PlayerLayerView(player: model.player)
+                .overlay { annotationLayer(info: info) }
                 .aspectRatio(info.naturalSize.width > 0 ? info.naturalSize.width / info.naturalSize.height : 16 / 9,
                              contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contentShape(Rectangle())
-                .gesture(jogGesture)
-                .onTapGesture { isCommentFocused = false; isPlayerFocused = true }
+                .gesture(jogGesture, isEnabled: !annotator.isActive)
+                .gesture(TapGesture().onEnded { isCommentFocused = false; isPlayerFocused = true },
+                         isEnabled: !annotator.isActive)
                 .padding(16)
 
             controlBar(info: info)
@@ -269,19 +292,44 @@ struct PlayerScreen: View {
         }
     }
 
-    /// Панель под видео: таймлайн, транспорт, тайм-код, скорость.
+    /// Поверх видео: холст в режиме рисования или сохранённые пометки текущего кадра на паузе.
+    @ViewBuilder
+    private func annotationLayer(info: VideoTimecodeInfo) -> some View {
+        if annotator.isActive {
+            AnnotationCanvas(editor: annotator)
+        } else if !model.isPlaying {
+            let annotations = model.comments.filter { $0.frame == model.currentFrame }.compactMap(\.annotation)
+            if !annotations.isEmpty {
+                AnnotationOverlay(annotations: annotations, frameSize: info.naturalSize)
+            }
+        }
+    }
+
+    /// Панель под видео: таймлайн, транспорт, тайм-код, скорость. В режиме рисования — инструменты.
     private func controlBar(info: VideoTimecodeInfo) -> some View {
         VStack(spacing: 4) {
             ScrubberView(frame: model.currentFrame, frameCount: info.frameCount,
                          markers: model.comments.filter { !$0.isResolved }.map(\.frame),
                          resolvedMarkers: model.comments.filter(\.isResolved).map(\.frame)) { model.scrub(toFrame: $0) }
+                // Рисунок привязан к кадру — пока рисуем, кадр не меняем.
+                .disabled(annotator.isActive)
+                .opacity(annotator.isActive ? 0.4 : 1)
 
-            HStack(spacing: 12) {
-                transportControls
-                Spacer(minLength: 8)
-                timecodeButton(info: info)
-                Spacer(minLength: 8)
-                speedMenu
+            if annotator.isActive {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    AnnotationToolbar(editor: annotator,
+                                      onSave: annotator.comment == nil ? nil : saveEditedDrawing,
+                                      onCancel: cancelDrawing)
+                        .frame(minHeight: 36)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    transportControls
+                    Spacer(minLength: 8)
+                    timecodeButton(info: info)
+                    Spacer(minLength: 8)
+                    speedMenu
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -331,12 +379,23 @@ struct PlayerScreen: View {
                     if focused, model.isPlaying { model.stop() }
                 }
 
+            Button {
+                if annotator.isActive { cancelDrawing() } else { startDrawing() }
+            } label: {
+                Image(systemName: "pencil.tip.crop.circle")
+                    .font(.title2)
+                    .foregroundStyle(annotator.isActive ? Theme.accent : Theme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(annotator.isActive && annotator.comment != nil)
+            .accessibilityLabel(annotator.isActive ? "Discard drawing" : "Draw on frame")
+
             departmentMenu
             TimecodeChip(text: model.currentTimecode?.description ?? "--:--:--:--", isProminent: true)
 
             Button("Submit", action: submitComment)
                 .buttonStyle(.borderedProminent)
-                .disabled(commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!canSubmit)
         }
         .padding(12)
         .background(Theme.panel)
@@ -363,10 +422,66 @@ struct PlayerScreen: View {
         .accessibilityLabel("Department")
     }
 
+    /// Нужен текст или рисунок. Пока правим рисунок сохранённого комментария, новый не отправляем.
+    private var canSubmit: Bool {
+        if annotator.isActive {
+            return annotator.comment == nil
+                && (!annotator.annotation.isEmpty || !commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        return !commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private func submitComment() {
-        model.addComment(commentText, department: composerDepartment)
+        guard canSubmit else { return }
+        if annotator.isActive {
+            model.addComment(commentText, department: composerDepartment,
+                             annotation: annotator.annotation, frame: annotator.frame)
+            annotator.end()
+        } else {
+            model.addComment(commentText, department: composerDepartment)
+        }
         commentText = ""
         isCommentFocused = false
+    }
+
+    // MARK: - Рисование
+
+    private func startDrawing() {
+        guard let info = model.info else { return }
+        model.stop()
+        annotator.begin(frame: model.currentFrame, frameSize: info.naturalSize)
+    }
+
+    private func cancelDrawing() {
+        annotator.end()
+        isPlayerFocused = true
+    }
+
+    private func editDrawing(_ comment: ReviewComment) {
+        guard let info = model.info else { return }
+        model.scrub(toFrame: comment.frame)
+        annotator.begin(frame: comment.frame, frameSize: info.naturalSize,
+                        annotation: comment.annotation, comment: comment)
+    }
+
+    private func saveEditedDrawing() {
+        if let comment = annotator.comment {
+            model.setAnnotation(annotator.annotation, for: comment)
+        }
+        annotator.end()
+        isPlayerFocused = true
+    }
+
+    private func shareImage(_ comment: ReviewComment) {
+        isExportingImage = true
+        Task {
+            defer { isExportingImage = false }
+            do {
+                sharedImage = SharedFile(url: try await model.exportFrameImage(for: comment))
+            } catch {
+                model.errorMessage = "Couldn't render the frame: \(error.localizedDescription)"
+            }
+        }
     }
 
     /// Jog: горизонтальный свайп по видео — покадровый скраб от кадра, где начался жест.
@@ -428,6 +543,7 @@ struct PlayerScreen: View {
     /// Клавиатура: пробел, ←/→ (⇧ — 10 кадров, ⌥ — секунда), J/K/L; K+J/L — шаг по кадру.
     /// Русская раскладка тоже работает: О/Л/Д на месте J/K/L.
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        if annotator.isActive { return .ignored }
         let isPressed = press.phase != .up
         switch press.key {
         case .space:
@@ -466,6 +582,7 @@ struct PlayerScreen: View {
         }
     }
 
+    /// В режиме рисования: ⌘Z / ⇧⌘Z — отмена/повтор, Esc — выйти; навигация по кадрам выключена.
     private var timecodeEntry: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Go to Timecode").font(.headline)
@@ -543,4 +660,20 @@ struct PlayerScreen: View {
             timecodeInputError = "Invalid timecode"
         }
     }
+}
+
+/// Файл для системного окна «Поделиться».
+struct SharedFile: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
