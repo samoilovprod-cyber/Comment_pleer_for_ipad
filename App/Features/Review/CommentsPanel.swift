@@ -9,6 +9,8 @@ struct CommentsPanel: View {
     let onToggleResolved: (ReviewComment) -> Void
     let onSetDepartment: (ReviewComment, Department?) -> Void
     let onEdit: (ReviewComment) -> Void
+    let onEditDrawing: (ReviewComment) -> Void
+    let onShareImage: (ReviewComment) -> Void
     let onDelete: (ReviewComment) -> Void
 
     enum Filter: String, CaseIterable {
@@ -148,8 +150,15 @@ struct CommentsPanel: View {
                         if let department = comment.department {
                             DepartmentChip(department: department)
                         }
+                        if comment.hasAnnotation {
+                            Image(systemName: "pencil.tip.crop.circle")
+                                .font(.caption)
+                                .foregroundStyle(Theme.accent)
+                                .accessibilityLabel("Has drawing")
+                        }
                     }
-                    Text(comment.text)
+                    Text(comment.text.isEmpty ? "Drawing" : comment.text)
+                        .italic(comment.text.isEmpty)
                         .font(.subheadline)
                         .foregroundStyle(comment.isResolved ? Theme.textSecondary : Theme.textPrimary)
                         .strikethrough(comment.isResolved)
@@ -182,6 +191,10 @@ struct CommentsPanel: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button("Edit", systemImage: "pencil") { onEdit(comment) }
+            Button(comment.hasAnnotation ? "Edit Drawing" : "Add Drawing", systemImage: "pencil.tip.crop.circle") {
+                onEditDrawing(comment)
+            }
+            Button("Share Frame Image", systemImage: "square.and.arrow.up") { onShareImage(comment) }
             Menu("Department", systemImage: "person.2") {
                 Picker("Department", selection: Binding(get: { comment.department },
                                                         set: { onSetDepartment(comment, $0) })) {

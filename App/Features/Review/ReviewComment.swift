@@ -50,7 +50,16 @@ final class ReviewComment {
     var isResolved: Bool
     /// `Department.rawValue`; nil — цех не назначен.
     var departmentRaw: String?
+    /// Пометки на кадре (`Annotation` в JSON); nil — без рисунка.
+    @Attribute(.externalStorage) var annotationData: Data?
     var video: ReviewVideo?
+
+    var annotation: Annotation? {
+        get { annotationData.flatMap(Annotation.decode) }
+        set { annotationData = newValue.flatMap { $0.isEmpty ? nil : $0.encoded() } }
+    }
+
+    var hasAnnotation: Bool { annotationData != nil }
 
     var department: Department? {
         get { departmentRaw.flatMap(Department.init(rawValue:)) }
